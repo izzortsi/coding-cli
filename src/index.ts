@@ -127,7 +127,7 @@ Flags (non-interactive mode):
 
 Environment:
   ZHIPU_API_KEY          z.ai API key (required)
-  ZAI_BASE_URL           z.ai base URL (default: https://open.bigmodel.cn/api/paas/v4)
+  ZAI_BASE_URL           z.ai base URL (default: https://api.z.ai/api/coding/paas/v4)
   CODING_CLI_DATA_DIR    Data directory (default: ~/.coding-cli)
 `.trim());
     return;

@@ -14,7 +14,7 @@ export function initProvider(): AuthResult {
     process.exit(1);
   }
 
-  const baseURL = process.env.ZAI_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4';
+  const baseURL = process.env.ZAI_BASE_URL || 'https://api.z.ai/api/coding/paas/v4';
   const customFetch = createZaiFetch(apiKey, baseURL);
   const provider = new AnthropicProvider({ fetch: customFetch });
 
