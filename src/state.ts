@@ -29,6 +29,8 @@ export interface StateContext {
   cliRoot: string;
   /** Whether fast-approve mode is active */
   fastApprove: boolean;
+  /** Whether auto-approve mode is active (full bypass) */
+  autoApprove: boolean;
 }
 
 /**
@@ -96,6 +98,16 @@ export function collectStateText(ctx: StateContext): string {
       '---[ STATE: fast_approve ]---',
       'Fast-approve mode is ACTIVE. Operator approves all staged items by pressing Enter (no /approve needed).',
       'Proceed as usual — stage writes and execs, they will be quickly approved.',
+    ].join('\n'));
+  }
+
+  // Auto-approve mode
+  if (ctx.autoApprove) {
+    parts.push([
+      '---[ STATE: auto_approve ]---',
+      'AUTO-APPROVE mode is ACTIVE. All staged writes and exec commands are applied immediately — no operator action needed.',
+      'The loop continues automatically: apply items → inject results → model continues → repeat until no more items are staged.',
+      'Proceed normally — your work will be applied and executed without interruption.',
     ].join('\n'));
   }
 

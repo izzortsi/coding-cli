@@ -64,6 +64,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let lastCtrlC = 0;
   let currentMode: AgentMode = DEFAULT_MODE;
   let fastApprove = false;
+  let autoApprove = false;
 
   // Self-awareness — detect coding-cli's own source root
   const cliRoot = getCliRoot();
@@ -149,6 +150,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       tools: registry.getDefinitions(),
       cliRoot,
       get fastApprove() { return fastApprove; },
+      get autoApprove() { return autoApprove; },
     };
   }
 
@@ -518,6 +520,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     stagedExec,
     get fastApprove() { return fastApprove; },
     setFastApprove: (value: boolean) => { fastApprove = value; },
+    get autoApprove() { return autoApprove; },
+    setAutoApprove: (value: boolean) => { autoApprove = value; },
     providers: opts.providers,
     get currentPreset() { return currentPreset; },
     get systemPrompt() { return systemPrompt; },
@@ -710,9 +714,74 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
 
       // Staged writes — full-width colored bar + audio notification
-      const pendingWrites = staged.list();
-      const pendingExecs = stagedExec.list();
-      const totalPending = pendingWrites.length + pendingExecs.length;
+      let pendingWrites = staged.list();
+      let pendingExecs = stagedExec.list();
+      let totalPending = pendingWrites.length + pendingExecs.length;
+
+      // Auto-approve loop: keep applying and continuing until no more pending items
+      while (autoApprove && totalPending > 0) {
+        console.log(`${FG.brightRed}AUTO${RESET} approving ${totalPending} item(s)...`);
+
+        // Apply writes
+        for (const w of pendingWrites) {
+          const r = await staged.approve(w.token);
+          console.log(`  ${r.success ? `${UI.success}✓${RESET}` : `${UI.danger}✗${RESET}`} ${w.filepath}`);
+        }
+
+        // Apply execs
+        const execOutputs: string[] = [];
+        for (const e of pendingExecs) {
+          console.log(`  ${UI.success}→${RESET} $ ${e.command}`);
+          const r = await stagedExec.approve(e.token);
+          if (r.success) {
+            const preview = (r.output || '(no output)').substring(0, 300).replace(/\n/g, ' ');
+            console.log(`    ${DIM}${preview}${r.output && r.output.length > 300 ? '...' : ''}${RESET}`);
+            execOutputs.push(`$ ${e.command}\n${r.output || '(no output)'}`);
+          } else {
+            console.log(`    ${UI.danger}${r.error}${RESET}`);
+            execOutputs.push(`$ ${e.command}\nFAILED: ${r.error}`);
+          }
+        }
+
+        // Inject results as user message so model sees what was applied
+        const appliedWrites = pendingWrites.filter(w => !staged.pendingWrites.has(w.token));
+        const parts: string[] = [];
+        if (appliedWrites.length > 0) {
+          parts.push(`Writes applied: ${appliedWrites.map(w => w.filepath).join(', ')}`);
+        }
+        if (execOutputs.length > 0) {
+          parts.push(`Execs completed:\n${execOutputs.join('\n---\n')}`);
+        }
+        if (parts.length > 0) {
+          engine.messages.push({
+            role: 'user',
+            content: [{ type: 'text', text: `[Auto-approved]: ${parts.join('\n\n')}` }],
+          });
+        }
+
+        syncChannelFromEngine();
+
+        // Check if model wants to continue (it might propose more items)
+        if (totalPending > 0) {
+          spinner.start('thinking (auto)');
+          const followUp = await engine.turn('', currentPreset.modelId, turnAbortController.signal);
+          spinner.stop();
+
+          if (followUp.finalText && !wasStreamed) {
+            console.log(renderMarkdown(followUp.finalText));
+          }
+          if (followUp.toolCalls.length > 0) {
+            console.log(renderToolCalls(followUp.toolCalls));
+          }
+        }
+
+        // Re-check pending items
+        pendingWrites = staged.list();
+        pendingExecs = stagedExec.list();
+        totalPending = pendingWrites.length + pendingExecs.length;
+      }
+
+      // Manual mode: show notice and wait for approval
       if (totalPending > 0) {
         const cols = process.stdout.columns || 80;
         console.log(renderStagedNotice(totalPending, cols));
@@ -749,7 +818,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const ch = `${FG.gray}${channel.name}${RESET}`;
     const mode = `${currentMode.color}${currentMode.id}${RESET}`;
     const fast = fastApprove ? ` ${UI.danger}FAST${RESET}` : '';
-    return `${preset} ${DIM}${BOX.dot}${RESET} ${ch} ${DIM}${BOX.dot}${RESET} ${mode}${fast} ${FG.brightCyan}❯${RESET} `;
+    const auto = autoApprove ? ` ${FG.brightRed}AUTO${RESET}` : '';
+    return `${preset} ${DIM}${BOX.dot}${RESET} ${ch} ${DIM}${BOX.dot}${RESET} ${mode}${fast}${auto} ${FG.brightCyan}❯${RESET} `;
   }
 
   function prompt(): void {

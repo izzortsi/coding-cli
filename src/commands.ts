@@ -15,7 +15,7 @@ import { pick } from './picker.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { RESET, DIM, UI } from './ui/index.js';
+import { RESET, DIM, FG, UI } from './ui/index.js';
 import {
   setBlob,
   getBlob,
@@ -48,6 +48,8 @@ export interface CommandContext {
   stagedExec: StagedExecManager;
   get fastApprove(): boolean;
   setFastApprove: (value: boolean) => void;
+  get autoApprove(): boolean;
+  setAutoApprove: (value: boolean) => void;
   // Current state
   currentPreset: ModelPreset;
   systemPrompt: string;
@@ -111,6 +113,7 @@ const commands: Record<string, CommandHandler> = {
       '  /edit system             Edit system prompt in $EDITOR',
       '  /paste                   Multi-line input mode (end with /end)',
       '  /fast                    Toggle fast-approve mode (Enter to approve all)',
+      '  /auto                    Toggle auto-approve mode (full bypass, model loops until done)',
       '  /approve [all|sel]       Approve all (all/empty) or one item by selector',
       '  /reject [all|sel]        Reject all (all/empty) or one item by selector',
       '  /files                   List pending staged writes',
@@ -578,11 +581,29 @@ const commands: Record<string, CommandHandler> = {
   },
 
   fast: async (_args, ctx) => {
+    if (ctx.autoApprove) {
+      ctx.setAutoApprove(false);
+      ctx.setFastApprove(true);
+      return `${UI.danger}FAST${RESET} Switched from AUTO to FAST — press Enter to approve staged items.\n${DIM}Use /auto for full bypass, /fast to disable.${RESET}`;
+    }
     ctx.setFastApprove(!ctx.fastApprove);
     if (ctx.fastApprove) {
-      return `${UI.danger}FAST${RESET} Fast-approve mode ON — press Enter to approve all staged items.\n${DIM}Use /fast to disable.${RESET}`;
+      return `${UI.danger}FAST${RESET} Fast-approve mode ON — press Enter to approve all staged items.\n${DIM}Use /fast to disable. Use /auto for full bypass.${RESET}`;
     }
     return `${DIM}Fast-approve mode OFF — staged items require manual /approve.${RESET}`;
+  },
+
+  auto: async (_args, ctx) => {
+    if (ctx.fastApprove) {
+      ctx.setFastApprove(false);
+      ctx.setAutoApprove(true);
+      return `${FG.brightRed}AUTO${RESET} Switched from FAST to AUTO — all staged items apply immediately, model loops until done.\n${DIM}Ctrl+C to interrupt. Use /auto to disable.${RESET}`;
+    }
+    ctx.setAutoApprove(!ctx.autoApprove);
+    if (ctx.autoApprove) {
+      return `${FG.brightRed}AUTO${RESET} Auto-approve mode ON — all staged items apply immediately, model continues automatically.\n${DIM}Ctrl+C to interrupt. Use /auto to disable.${RESET}`;
+    }
+    return `${DIM}Auto-approve mode OFF — staged items require manual /approve.${RESET}`;
   },
 
   identity: async (args, ctx) => {
