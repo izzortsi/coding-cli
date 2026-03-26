@@ -65,6 +65,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let currentMode: AgentMode = DEFAULT_MODE;
   let fastApprove = false;
   let autoApprove = false;
+  let ctrlXPending = false;
 
   // Self-awareness — detect coding-cli's own source root
   const cliRoot = getCliRoot();
@@ -394,11 +395,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
       if (key && key.ctrl && key.name === 'x') {
         // Set flag for next keypress
-        (rl as any)._ctrlXPending = true;
+        ctrlXPending = true;
         return;
       }
-      if ((rl as any)._ctrlXPending && key && key.name === 'e') {
-        (rl as any)._ctrlXPending = false;
+      if (ctrlXPending && key && key.name === 'e') {
+        ctrlXPending = false;
         // Get current line text
         const currentLine = (rl as any).line || '';
         // Clear the current line
@@ -418,15 +419,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         }
         return;
       }
-      if ((rl as any)._ctrlXPending && key && key.name === 'tab') {
-        (rl as any)._ctrlXPending = false;
+      if (ctrlXPending && key && key.name === 'tab') {
+        ctrlXPending = false;
         const next = getNextMode(currentMode.id);
         switchMode(next);
         process.stdout.write('\r\x1b[2K');
         prompt();
         return;
       }
-      (rl as any)._ctrlXPending = false;
+      ctrlXPending = false;
     });
   }
 
