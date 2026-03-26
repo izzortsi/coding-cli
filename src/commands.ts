@@ -1,4 +1,5 @@
 import type { StagedWriteManager } from './tools/staged.js';
+import type { StagedExecManager } from './tools/stagedExec.js';
 import type { Provider, ApiMessage, TextContent } from './types.js';
 import type { ModelPreset } from './presets.js';
 import type { ChannelData } from './channel.js';
@@ -43,6 +44,7 @@ async function loadCustomCommands(projectRoot: string): Promise<CustomCommands |
 
 export interface CommandContext {
   staged: StagedWriteManager;
+  stagedExec: StagedExecManager;
   // Current state
   currentPreset: ModelPreset;
   systemPrompt: string;
@@ -390,77 +392,173 @@ const commands: Record<string, CommandHandler> = {
 
   approve: async (args, ctx) => {
     const sel = args.trim();
+    const pendingWrites = ctx.staged.list();
+    const pendingExecs = ctx.stagedExec.list();
+    const totalCount = pendingWrites.length + pendingExecs.length;
+
     if (sel === 'all') {
-      const results = await ctx.staged.approveAll();
-      if (results.length === 0) return 'No pending writes.';
-      const output = results.map(r =>
-        r.success ? `Applied: ${r.filepath}` : `Failed (${r.token}): ${r.error}`
-      ).join('\n');
-      console.log(output);
-      const applied = results.filter(r => r.success);
-      if (applied.length > 0) {
-        const files = applied.map(r => r.filepath).join(', ');
+      if (totalCount === 0) return 'Nothing pending.';
+      const lines: string[] = [];
+
+      if (pendingWrites.length > 0) {
+        const results = await ctx.staged.approveAll();
+        for (const r of results) {
+          lines.push(r.success ? `Applied: ${r.filepath}` : `Failed (${r.token}): ${r.error}`);
+        }
+      }
+
+      if (pendingExecs.length > 0) {
+        const results = await ctx.stagedExec.approveAll();
+        for (const r of results) {
+          if (r.success) {
+            const entry = pendingExecs.find(e => e.token === r.token);
+            const cmd = entry ? entry.command : r.token;
+            const preview = (r.output || '').substring(0, 200).replace(/\n/g, ' ');
+            console.log(`Executed: $ ${cmd}`);
+            if (r.output) console.log(`  ${preview}${r.output!.length > 200 ? '...' : ''}`);
+            lines.push(`Executed: $ ${cmd}`);
+          } else {
+            lines.push(`Exec failed (${r.token}): ${r.error}`);
+          }
+        }
+      }
+
+      const appliedWrites = pendingWrites.filter(w => !ctx.staged.pendingWrites.has(w.token));
+      if (appliedWrites.length > 0) {
+        const files = appliedWrites.map(w => w.filepath).join(', ');
         await ctx.sendTurn(`[Staged writes approved and applied: ${files}]`);
       }
-      return undefined;
+      return lines.join('\n');
     }
 
-    const pending = ctx.staged.list();
-    if (pending.length === 0) return 'No pending writes.';
+    if (totalCount === 0) return 'Nothing pending.';
 
-    if (!sel && pending.length === 1) {
-      const r = await ctx.staged.approve(pending[0].token);
-      if (r.success) {
-        console.log(`Applied: ${r.filepath}`);
-        await ctx.sendTurn(`[Staged write approved and applied: ${r.filepath}]`);
-        return undefined;
+    // Build combined list for display
+    const allPending: Array<{ type: 'write'; entry: typeof pendingWrites[0] } | { type: 'exec'; entry: typeof pendingExecs[0] }> = [];
+    for (const w of pendingWrites) allPending.push({ type: 'write', entry: w });
+    for (const e of pendingExecs) allPending.push({ type: 'exec', entry: e });
+
+    if (!sel && totalCount === 1) {
+      const item = allPending[0];
+      if (item.type === 'write') {
+        const r = await ctx.staged.approve(item.entry.token);
+        if (r.success) {
+          console.log(`Applied: ${r.filepath}`);
+          await ctx.sendTurn(`[Staged write approved and applied: ${r.filepath}]`);
+          return undefined;
+        }
+        return `Failed: ${r.error}`;
+      } else {
+        console.log(`Executing: $ ${item.entry.command}`);
+        const r = await ctx.stagedExec.approve(item.entry.token);
+        if (r.success) {
+          const preview = (r.output || '').substring(0, 200).replace(/\n/g, ' ');
+          return r.output || '(no output)';
+        }
+        return `Failed: ${r.error}`;
       }
-      return `Failed: ${r.error}`;
     }
 
     if (!sel) {
-      const lines = pending.map((w, i) =>
-        `  ${i + 1}. ${w.filepath} [${w.mode}] token: ${w.token}`
-      );
-      return `Pending writes:\n${lines.join('\n')}\n\nUse /approve <number|token|all>`;
+      const lines = allPending.map((item, i) => {
+        if (item.type === 'write') {
+          const w = item.entry;
+          return `  ${i + 1}. ${w.filepath} [write] token: ${w.token}`;
+        } else {
+          const e = item.entry;
+          return `  ${i + 1}. $ ${e.command} [exec] token: ${e.token}`;
+        }
+      });
+      return `Pending (${totalCount}):\n${lines.join('\n')}\n\nUse /approve <number|token|all>`;
     }
 
-    const r = await ctx.staged.approve(sel);
-    if (r.success) {
-      console.log(`Applied: ${r.filepath}`);
-      await ctx.sendTurn(`[Staged write approved and applied: ${r.filepath}]`);
+    // Try writes first, then execs
+    const writeResult = await ctx.staged.approve(sel);
+    if (writeResult.success) {
+      console.log(`Applied: ${writeResult.filepath}`);
+      await ctx.sendTurn(`[Staged write approved and applied: ${writeResult.filepath}]`);
       return undefined;
     }
-    return `Failed: ${r.error}`;
+    if (writeResult.error && !writeResult.error.startsWith('No staged write')) {
+      return `Failed: ${writeResult.error}`;
+    }
+
+    const execResult = await ctx.stagedExec.approve(sel);
+    if (execResult.success) {
+      console.log(`Executed.`);
+      return execResult.output || '(no output)';
+    }
+    return execResult.error || `No pending item matching "${sel}"`;
   },
 
   apply: async (args, ctx) => commands.approve(args, ctx),
 
   reject: async (args, ctx) => {
     const sel = args.trim();
+    const pendingWrites = ctx.staged.list();
+    const pendingExecs = ctx.stagedExec.list();
+    const totalCount = pendingWrites.length + pendingExecs.length;
+
     if (sel === 'all') {
-      const count = ctx.staged.rejectAll();
-      return `Rejected ${count} pending write(s).`;
+      const wCount = ctx.staged.rejectAll();
+      const eCount = ctx.stagedExec.rejectAll();
+      const total = wCount + eCount;
+      return total === 0 ? 'Nothing pending.' : `Rejected ${total} pending item(s) (${wCount} writes, ${eCount} execs).`;
     }
+
     if (!sel) {
-      const pending = ctx.staged.list();
-      if (pending.length === 0) return 'No pending writes.';
-      if (pending.length === 1) {
-        ctx.staged.reject(pending[0].token);
-        return `Rejected: ${pending[0].filepath}`;
+      if (totalCount === 0) return 'Nothing pending.';
+      if (totalCount === 1) {
+        if (pendingWrites.length === 1) {
+          ctx.staged.reject(pendingWrites[0].token);
+          return `Rejected: ${pendingWrites[0].filepath}`;
+        } else {
+          ctx.stagedExec.reject(pendingExecs[0].token);
+          return `Rejected: $ ${pendingExecs[0].command}`;
+        }
       }
-      const lines = pending.map((w, i) => `  ${i + 1}. ${w.filepath} [${w.mode}] token: ${w.token}`);
-      return `Pending writes:\n${lines.join('\n')}\n\nUse /reject <number|token|all>`;
+      const allPending: Array<{ type: 'write'; entry: typeof pendingWrites[0] } | { type: 'exec'; entry: typeof pendingExecs[0] }> = [];
+      for (const w of pendingWrites) allPending.push({ type: 'write', entry: w });
+      for (const e of pendingExecs) allPending.push({ type: 'exec', entry: e });
+      const lines = allPending.map((item, i) => {
+        if (item.type === 'write') {
+          const w = item.entry;
+          return `  ${i + 1}. ${w.filepath} [write] token: ${w.token}`;
+        } else {
+          const e = item.entry;
+          return `  ${i + 1}. $ ${e.command} [exec] token: ${e.token}`;
+        }
+      });
+      return `Pending (${totalCount}):\n${lines.join('\n')}\n\nUse /reject <number|token|all>`;
     }
-    return ctx.staged.reject(sel) ? 'Rejected.' : `No staged write matching "${sel}"`;
+
+    if (ctx.staged.reject(sel)) return 'Rejected.';
+    if (ctx.stagedExec.reject(sel)) return 'Rejected.';
+    return `No pending item matching "${sel}"`;
   },
 
   files: async (_args, ctx) => {
-    const pending = ctx.staged.list();
-    if (pending.length === 0) return 'No pending writes.';
-    return pending.map((w, i) =>
-      `  ${i + 1}. ${w.filepath} [${w.mode}] token: ${w.token}`
-    ).join('\n');
+    const pendingWrites = ctx.staged.list();
+    const pendingExecs = ctx.stagedExec.list();
+    const totalCount = pendingWrites.length + pendingExecs.length;
+
+    if (totalCount === 0) return 'Nothing pending.';
+
+    const lines: string[] = [];
+    if (pendingWrites.length > 0) {
+      lines.push('Staged writes:');
+      lines.push(...pendingWrites.map((w, i) =>
+        `  ${i + 1}. ${w.filepath} [${w.mode}] token: ${w.token}`
+      ));
+    }
+    if (pendingExecs.length > 0) {
+      if (lines.length > 0) lines.push('');
+      lines.push('Staged execs:');
+      lines.push(...pendingExecs.map((e, i) =>
+        `  ${pendingWrites.length + i + 1}. $ ${e.command} token: ${e.token}`
+      ));
+    }
+    return lines.join('\n');
   },
 
   identity: async (args, ctx) => {

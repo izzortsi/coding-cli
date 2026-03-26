@@ -24,6 +24,7 @@ const STAGING_TOOLS = new Set([
   'propose_write',
   'propose_edit',
   'propose_patch',
+  'propose_exec',
   'validate_self',
 ]);
 

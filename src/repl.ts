@@ -6,6 +6,7 @@ import { Engine } from './engine.js';
 import { ToolRegistry } from './tools/registry.js';
 import { buildBuiltinTools } from './tools/builtins.js';
 import { StagedWriteManager } from './tools/staged.js';
+import { StagedExecManager } from './tools/stagedExec.js';
 import { handleCommand, type CommandContext } from './commands.js';
 import {
   createChannel,
@@ -68,8 +69,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   // Set up tools
   const registry = new ToolRegistry();
   const staged = new StagedWriteManager(opts.projectRoot);
+  const stagedExec = new StagedExecManager(opts.projectRoot);
   for (const tool of buildBuiltinTools(opts.projectRoot, cliRoot)) registry.register(tool);
   for (const tool of staged.getTools()) registry.register(tool);
+  for (const tool of stagedExec.getTools()) registry.register(tool);
 
   // run_subagent tool — model can spawn subagents from the tool loop
   const subagentTool = buildSubagentTool(
@@ -459,6 +462,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     channel = createChannel(name, currentPreset.id, systemPrompt);
     engine.messages = [];
     staged.pendingWrites.clear();
+    stagedExec.pendingExecs.clear();
 
     console.log(`${UI.success}${BOX.check}${RESET} New channel: ${BOLD}${name}${RESET} ${DIM}(${channel.id})${RESET}`);
     saveChannel(channel).catch(() => {});
@@ -471,6 +475,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     channel = branchChannelData(name, channel, currentPreset.id);
     engine.messages = [...channel.messages];
     staged.pendingWrites.clear();
+    stagedExec.pendingExecs.clear();
 
     console.log(`${UI.success}${BOX.check}${RESET} Branched: ${BOLD}${name}${RESET} ${DIM}(${channel.id}) · ${channel.messages.length} messages carried${RESET}`);
     saveChannel(channel).catch(() => {});
@@ -489,6 +494,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     systemPrompt = channel.systemPrompt;
     engine.config.systemPrompt = systemPrompt;
     staged.pendingWrites.clear();
+    stagedExec.pendingExecs.clear();
 
     const restored = findPreset(channel.presetId);
     if (restored && opts.providers.has(restored.providerId)) {
@@ -505,6 +511,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   const commandCtx: CommandContext = {
     staged,
+    stagedExec,
     providers: opts.providers,
     get currentPreset() { return currentPreset; },
     get systemPrompt() { return systemPrompt; },
@@ -697,10 +704,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
 
       // Staged writes — full-width colored bar + audio notification
-      const pending = staged.list();
-      if (pending.length > 0) {
+      const pendingWrites = staged.list();
+      const pendingExecs = stagedExec.list();
+      const totalPending = pendingWrites.length + pendingExecs.length;
+      if (totalPending > 0) {
         const cols = process.stdout.columns || 80;
-        console.log(renderStagedNotice(pending.length, cols));
+        console.log(renderStagedNotice(totalPending, cols));
         process.stdout.write('\x07'); // terminal bell — approval needed
       }
 
