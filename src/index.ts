@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { detectAuth, runOAuthLogin, runOAuthLogout } from './auth.js';
 import { startRepl } from './repl.js';
 import { getAvailablePresets, getDefaultPreset, findPreset } from './presets.js';
+import { pick } from './picker.js';
 import { listChannels, loadChannel } from './channel.js';
 import { Engine } from './engine.js';
 import { ToolRegistry } from './tools/registry.js';
@@ -192,14 +193,29 @@ Environment:
     console.log(`Auth: ${entry.label} [${id}]`);
   }
 
-  // Find available presets and pick default
-  const available = getAvailablePresets(new Set(auth.providers.keys()));
+  // If multiple providers, let user pick
+  let activeProviderId = auth.defaultId;
+  if (auth.providers.size > 1) {
+    const items = Array.from(auth.providers.entries()).map(([id, entry]) => ({
+      label: entry.label,
+      value: id,
+      marker: id === auth.defaultId ? '(default)' : undefined,
+    }));
+    const chosen = await pick(items, 'Select a provider:');
+    if (chosen) {
+      activeProviderId = chosen;
+    }
+    console.log(`Using: ${auth.providers.get(activeProviderId)!.label}\n`);
+  }
+
+  // Find available presets for selected provider
+  const available = getAvailablePresets(new Set([activeProviderId]));
   if (available.length === 0) {
-    console.error('No model presets available for configured providers.');
+    console.error('No model presets available for selected provider.');
     process.exit(1);
   }
 
-  const initialPreset = getDefaultPreset(auth.defaultId as any) || available[0];
+  const initialPreset = getDefaultPreset(activeProviderId as any) || available[0];
   const projectRoot = process.cwd();
 
   // Try to resume most recent channel
