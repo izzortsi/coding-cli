@@ -50,13 +50,14 @@ async function runSingleTurn(flags: ParsedFlags): Promise<void> {
   const quiet = flags.quiet;
   const jsonOutput = flags.format === 'json';
 
-  const auth = detectAuth();
+  const auth = await detectAuth();
   if (!auth) {
     if (!quiet) {
       console.error('No authentication configured.');
       console.error('  coding-cli auth       — OAuth (Claude Pro/Max)');
       console.error('  ANTHROPIC_API_KEY=... — API key');
       console.error('  ZHIPU_API_KEY=...     — z.ai');
+      console.error('  Ollama running        — local models');
     }
     process.exit(1);
   }
@@ -158,6 +159,7 @@ Environment:
   ANTHROPIC_BASE_URL     Custom base URL
   ZHIPU_API_KEY          z.ai API key
   ZAI_BASE_URL           z.ai base URL
+  OLLAMA_BASE_URL        Ollama server URL (default: http://localhost:11434)
   CODING_CLI_DATA_DIR    Data directory (default: ~/.coding-cli)
 `.trim());
     return;
@@ -178,12 +180,13 @@ Environment:
 
   console.log('coding-cli v0.1.0\n');
 
-  const auth = detectAuth();
+  const auth = await detectAuth();
   if (!auth) {
     console.error('No authentication configured.');
     console.error('  coding-cli auth       — OAuth (Claude Pro/Max)');
     console.error('  ANTHROPIC_API_KEY=... — API key');
     console.error('  ZHIPU_API_KEY=...     — z.ai');
+    console.error('  Ollama running        — local models');
     process.exit(1);
   }
 

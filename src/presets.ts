@@ -1,4 +1,4 @@
-export type ProviderId = 'anthropic' | 'zai';
+export type ProviderId = 'anthropic' | 'zai' | 'ollama';
 
 export interface ModelPreset {
   id: string;
@@ -89,4 +89,16 @@ export function getDefaultPreset(providerId: ProviderId): ModelPreset | undefine
  */
 export function getPresetsForProvider(providerId: string): ModelPreset[] {
   return PRESETS.filter(p => p.providerId === providerId);
+}
+
+/**
+ * Register dynamically discovered presets (e.g., from Ollama).
+ * Avoids duplicates by id.
+ */
+export function registerPresets(presets: ModelPreset[]): void {
+  for (const preset of presets) {
+    if (!PRESETS.some(p => p.id === preset.id)) {
+      PRESETS.push(preset);
+    }
+  }
 }

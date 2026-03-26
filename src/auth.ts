@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { AnthropicProvider } from './provider.js';
 import { createOAuthFetch } from './oauthFetch.js';
 import { createZaiFetch } from './zaiFetch.js';
+import { createOllamaFetch } from './ollamaFetch.js';
+import { discoverOllamaModels } from './ollamaDiscovery.js';
+import { registerPresets } from './presets.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BRIDGE_PATH = path.resolve(__dirname, '../scripts/auth_bridge.py');
@@ -51,7 +54,7 @@ export interface DetectedProviders {
   defaultId: string;
 }
 
-export function detectAuth(): DetectedProviders | null {
+export async function detectAuth(): Promise<DetectedProviders | null> {
   const providers = new Map<string, { provider: AnthropicProvider; label: string }>();
 
   // Try OAuth first
@@ -84,6 +87,20 @@ export function detectAuth(): DetectedProviders | null {
       provider: new AnthropicProvider({ fetch: zaiFetch }),
       label: `z.ai (${baseURL})`,
     });
+  }
+
+  // Ollama (local — OpenAI-compatible, no API key needed)
+  {
+    const ollamaBase = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+    const ollamaModels = await discoverOllamaModels(ollamaBase);
+    if (ollamaModels.length > 0) {
+      registerPresets(ollamaModels);
+      const ollamaFetch = createOllamaFetch(`${ollamaBase}/v1`);
+      providers.set('ollama', {
+        provider: new AnthropicProvider({ fetch: ollamaFetch }),
+        label: `Ollama (${ollamaBase}) — ${ollamaModels.length} model${ollamaModels.length === 1 ? '' : 's'}`,
+      });
+    }
   }
 
   if (providers.size === 0) return null;
