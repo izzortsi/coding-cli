@@ -122,8 +122,8 @@ export function renderUsage(usage: Usage): string {
 
 export function renderStagedNotice(count: number, cols = 0): string {
   if (count === 0) return '';
-  const label = count === 1 ? '1 staged write' : `${count} staged writes`;
-  const hint = '/approve to apply · /reject to discard';
+  const label = count === 1 ? '1 pending item' : `${count} pending items`;
+  const hint = '/approve . to apply · /reject . to discard';
   const inner = `  ${BOX.arrow} ${label}  ${DIM}${hint}${RESET}`;
   const barWidth = cols > 0 ? cols : 60;
   const visLen = visibleLength(inner);

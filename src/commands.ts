@@ -107,8 +107,8 @@ const commands: Record<string, CommandHandler> = {
       '  /edit                    Compose message in $EDITOR',
       '  /edit system             Edit system prompt in $EDITOR',
       '  /paste                   Multi-line input mode (end with /end)',
-      '  /approve [sel]           Apply staged writes (token, number, or "all")',
-      '  /reject [sel]            Discard staged writes',
+      '  /approve [.|all|sel]     Apply all pending items (., empty, all), or one by selector',
+      '  /reject [.|all|sel]      Discard all pending items (., empty, all), or one by selector',
       '  /files                   List pending staged writes',
       '  /commit [message]        Stage all changes and git commit (alias for /git commit)',
       '  /git status              Show git status',
@@ -396,7 +396,8 @@ const commands: Record<string, CommandHandler> = {
     const pendingExecs = ctx.stagedExec.list();
     const totalCount = pendingWrites.length + pendingExecs.length;
 
-    if (sel === 'all') {
+    // . or empty = approve all (shortcut for single-keystroke approval)
+    if (sel === 'all' || sel === '.' || totalCount === 0) {
       if (totalCount === 0) return 'Nothing pending.';
       const lines: string[] = [];
 
@@ -509,7 +510,8 @@ const commands: Record<string, CommandHandler> = {
     const pendingExecs = ctx.stagedExec.list();
     const totalCount = pendingWrites.length + pendingExecs.length;
 
-    if (sel === 'all') {
+    // . or empty = approve all (shortcut for single-keystroke approval)
+    if (sel === 'all' || sel === '.' || totalCount === 0) {
       const wCount = ctx.staged.rejectAll();
       const eCount = ctx.stagedExec.rejectAll();
       const total = wCount + eCount;
