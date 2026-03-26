@@ -99,11 +99,11 @@ export async function buildBootstrapSteps(projectRoot: string): Promise<Bootstra
 
   // 5. Onboarding docs (if they exist in this project)
   const onboardingDocs = [
-    'docs/grove/onboarding/00_MINDSET.md',
-    'docs/grove/onboarding/01_MECHANICS.md',
-    'docs/grove/onboarding/02_WORKFLOW.md',
-    'docs/grove/CORE_PRINCIPLES.md',
-    'docs/grove/onboarding/PROJECT_ESSENTIALS.md',
+    'docs/coding-cli/onboarding/00_MINDSET.md',
+    'docs/coding-cli/onboarding/01_MECHANICS.md',
+    'docs/coding-cli/onboarding/02_WORKFLOW.md',
+    'docs/coding-cli/CORE_PRINCIPLES.md',
+    'docs/coding-cli/onboarding/PROJECT_ESSENTIALS.md',
   ];
 
   for (const doc of onboardingDocs) {

@@ -33,7 +33,7 @@ type CustomCommands = Record<string, CustomCommand>;
 
 async function loadCustomCommands(projectRoot: string): Promise<CustomCommands | null> {
   try {
-    const filePath = join(projectRoot, '.grove', 'commands.json');
+    const filePath = join(projectRoot, '.coding-cli', 'commands.json');
     const content = await readFile(filePath, 'utf-8');
     return JSON.parse(content) as CustomCommands;
   } catch {
@@ -73,7 +73,7 @@ export interface CommandContext {
   injectUserMessage: (text: string) => void;
   showSidebar?: () => Promise<void>;
   /** coding-cli's own source root for self-modification */
-  groveRoot: string;
+  cliRoot: string;
   quit: () => void;
 }
 
@@ -691,7 +691,7 @@ const commands: Record<string, CommandHandler> = {
   },
 
   rebuild: async (_args, ctx) => {
-    const result = rebuildSelf(ctx.groveRoot);
+    const result = rebuildSelf(ctx.cliRoot);
     if (result.success) {
       return `Build successful. Restart coding-cli to load changes.\n${result.output}`;
     }
@@ -712,7 +712,7 @@ export async function handleCommand(input: string, ctx: CommandContext): Promise
   const handler = commands[name];
   if (handler) return handler(args, ctx);
 
-  // Try custom commands from .grove/commands.json
+  // Try custom commands from .coding-cli/commands.json
   const custom = await loadCustomCommands(ctx.projectRoot);
   if (custom && custom[name]) {
     const cmd = custom[name];

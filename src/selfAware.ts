@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
  * Locate coding-cli's own source root by walking up from the running
  * script and looking for a package.json with name "coding-cli".
  */
-export function getGroveRoot(): string {
+export function getCliRoot(): string {
   const thisFile = fileURLToPath(import.meta.url);
   let dir = path.dirname(thisFile);
   for (let i = 0; i < 10; i++) {
@@ -39,9 +39,9 @@ export function getGroveRoot(): string {
  * Run `tsc --noEmit` against coding-cli's own tsconfig.
  * Returns compiler output or a success message.
  */
-export function validateSelf(groveRoot: string): string {
+export function validateSelf(cliRoot: string): string {
   const result = spawnSync('npx', ['tsc', '--noEmit', '--project', 'tsconfig.json'], {
-    cwd: groveRoot,
+    cwd: cliRoot,
     encoding: 'utf8',
     timeout: 60_000,
     shell: true,
@@ -55,9 +55,9 @@ export function validateSelf(groveRoot: string): string {
  * Rebuild coding-cli by running `tsc` in the coding-cli root.
  * Returns success/failure and compiler output.
  */
-export function rebuildSelf(groveRoot: string): { success: boolean; output: string } {
+export function rebuildSelf(cliRoot: string): { success: boolean; output: string } {
   const result = spawnSync('npx', ['tsc', '--project', 'tsconfig.json'], {
-    cwd: groveRoot,
+    cwd: cliRoot,
     encoding: 'utf8',
     timeout: 60_000,
     shell: true,

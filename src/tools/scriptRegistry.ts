@@ -1,7 +1,7 @@
 /**
  * Script Tool Registry — File-based external tool loader
  *
- * Reads `.grove/tools.json` from the project root and registers each entry
+ * Reads `.coding-cli/tools.json` from the project root and registers each entry
  * as a script tool. Scripts receive their arguments as JSON on stdin and
  * must write their result to stdout (exit 0) or stderr (exit non-zero).
  *
@@ -16,12 +16,12 @@
  * is called from onBeforeApiCall — so edits to tools.json take effect on
  * the next turn with no restart required.
  *
- * Example .grove/tools.json:
+ * Example .coding-cli/tools.json:
  * [
  *   {
  *     "name": "run_tests",
  *     "description": "Run the test suite. Returns pass/fail summary.",
- *     "script": ".grove/tools/run_tests.py",
+ *     "script": ".coding-cli/tools/run_tests.py",
  *     "input_schema": {
  *       "type": "object",
  *       "properties": {
@@ -54,7 +54,7 @@ export interface ScriptToolEntry {
   timeoutMs?: number;
 }
 
-const REGISTRY_PATH = '.grove/tools.json';
+const REGISTRY_PATH = '.coding-cli/tools.json';
 
 /** Infer the interpreter command from a script file extension. */
 function inferCommand(scriptPath: string): string[] {
@@ -74,7 +74,7 @@ function inferCommand(scriptPath: string): string[] {
 }
 
 /**
- * Load script tools from .grove/tools.json.
+ * Load script tools from .coding-cli/tools.json.
  *
  * Returns an empty array (not an error) if the file doesn't exist —
  * the registry is optional. Throws on malformed JSON or invalid entries.

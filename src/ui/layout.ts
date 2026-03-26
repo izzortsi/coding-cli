@@ -68,7 +68,6 @@ export const TOOL_ICONS: Record<string, string> = {
   find_files:                `${FG.magenta}◆${RESET}`,
   propose_write:             `${FG.brightGreen}◆${RESET}`,
   propose_edit:              `${FG.green}◆${RESET}`,
-  run_typescript_validation: `${FG.brightYellow}◆${RESET}`,
   run_subagent:              `${FG.brightCyan}◆${RESET}`,
 };
 

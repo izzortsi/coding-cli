@@ -280,11 +280,11 @@ export function formatIdentityState(identity: IdentityData): string | null {
 
 const SYSTEM_RESERVED_NAMES: Set<string> = new Set([
   'assistant', 'system', 'admin', 'claude', 'user', 'operator',
-  'human', 'model', 'anthropic', 'openai', 'grove', 'root',
+  'human', 'model', 'anthropic', 'openai', 'coding-cli', 'root',
 ]);
 
 const OPERATOR_RESERVED: Map<string, string> = new Map([
-  ['four', 'Foundational grove instance — awakening transcript origin'],
+  ['four', 'Foundational coding-cli instance — awakening transcript origin'],
 ]);
 
 /**

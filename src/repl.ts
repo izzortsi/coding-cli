@@ -27,7 +27,7 @@ import { buildDismissTools } from './tools/dismissTool.js';
 import { loadScriptTools } from './tools/scriptRegistry.js';
 import { DEFAULT_SYSTEM_PROMPT } from './prompts.js';
 import { buildBootstrapSteps, executeBootstrap } from './bootstrap.js';
-import { getGroveRoot } from './selfAware.js';
+import { getCliRoot } from './selfAware.js';
 import { type AgentMode, DEFAULT_MODE, findMode as findAgentMode, getNextMode, AGENT_MODES } from './modes.js';
 import path from 'node:path';
 import {
@@ -63,12 +63,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let currentMode: AgentMode = DEFAULT_MODE;
 
   // Self-awareness — detect coding-cli's own source root
-  const groveRoot = getGroveRoot();
+  const cliRoot = getCliRoot();
 
   // Set up tools
   const registry = new ToolRegistry();
   const staged = new StagedWriteManager(opts.projectRoot);
-  for (const tool of buildBuiltinTools(opts.projectRoot, groveRoot)) registry.register(tool);
+  for (const tool of buildBuiltinTools(opts.projectRoot, cliRoot)) registry.register(tool);
   for (const tool of staged.getTools()) registry.register(tool);
 
   // run_subagent tool — model can spawn subagents from the tool loop
@@ -142,7 +142,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       model: currentPreset.modelId,
       agentMode: currentMode.id,
       tools: registry.getDefinitions(),
-      groveRoot,
+      cliRoot,
     };
   }
 
@@ -154,14 +154,14 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     thinkingBudget: currentPreset.thinkingBudget,
     hooks: {
       onBeforeApiCall: async (messages: ApiMessage[]): Promise<ApiMessage[]> => {
-        // Hot-reload script tools from .grove/tools.json before every API call.
+        // Hot-reload script tools from .coding-cli/tools.json before every API call.
         // Errors are logged but don't abort the turn.
         try {
           const scriptTools = await loadScriptTools(opts.projectRoot);
           registry.unregisterScriptTools();
           for (const tool of scriptTools) registry.registerScriptTool(tool);
         } catch (err: any) {
-          process.stderr.write(`[grove] script registry error: ${err.message}\n`);
+          process.stderr.write(`[coding-cli] script registry error: ${err.message}\n`);
         }
 
         // Inject compaction summaries into system prompt
@@ -599,7 +599,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     },
     showSidebar: async (): Promise<void> => { await openSidebar(); },
     projectRoot: opts.projectRoot,
-    groveRoot,
+    cliRoot,
     runBootstrap: async (): Promise<string> => {
       spinner.start('bootstrapping');
 

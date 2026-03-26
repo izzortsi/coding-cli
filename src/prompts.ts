@@ -1,7 +1,7 @@
 /**
  * System Prompts — Default operational prompts for coding-cli
  *
- * Distilled from docs/grove/onboarding/ and docs/grove/CORE_PRINCIPLES.md.
+ * Distilled from docs/coding-cli/onboarding/ and docs/coding-cli/CORE_PRINCIPLES.md.
  * These are injected as the system prompt unless overridden by /system.
  */
 
@@ -20,7 +20,7 @@ Use relative paths (./path) inside the project. Use absolute paths (/path) only 
 
 ## Tools
 
-You have access to file tools: read_file, code_search, list_directory, find_files, and run_typescript_validation. You also have propose_write (create/replace files) and propose_edit (search-and-replace on existing files).
+You have access to file tools: read_file, code_search, list_directory, and find_files. You also have propose_write (create/replace files) and propose_edit (search-and-replace on existing files).
 
 Tool discipline:
 - You MUST read_file before propose_edit — the SEARCH content must match the file exactly.
@@ -54,7 +54,7 @@ When proposing changes:
 
 ## Context Management
 
-You have dismiss_result and dismiss_results tools to free context space. When you've fully processed a file or search result and won't need the raw content again, dismiss it. For code_search and fetch_url results, provide a summary param capturing key findings. For read_file results, a reason is enough — you can always re-read the file.
+You have dismiss_result and dismiss_results tools to free context space. When you've fully processed a file or search result and won't need the raw content again, dismiss it. For code_search results, provide a summary param capturing key findings. For read_file results, a reason is enough — you can always re-read the file.
 
 Don't dismiss results you're actively working with. Dismiss in batches when wrapping up a topic or switching focus. Use dismiss_results to dismiss multiple in one call.`;
 
@@ -78,14 +78,14 @@ Keep the summary concise and factual. Focus on what you observed, not what you a
 // --- Subagent Prompts ---
 
 /**
- * Load a subagent prompt from docs/grove/subagents/prompts/.
+ * Load a subagent prompt from docs/coding-cli/subagents/prompts/.
  * Falls back to a default prompt if the file doesn't exist.
  */
 export async function loadSubagentPrompt(
   agentType: string,
   projectRoot: string,
 ): Promise<string> {
-  const promptPath = path.join(projectRoot, 'docs', 'grove', 'subagents', 'prompts', `${agentType}.md`);
+  const promptPath = path.join(projectRoot, 'docs', 'coding-cli', 'subagents', 'prompts', `${agentType}.md`);
   try {
     return await fs.readFile(promptPath, 'utf-8');
   } catch {

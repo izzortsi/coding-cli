@@ -21,7 +21,7 @@ export class ToolRegistry {
     this.scriptToolNames.add(tool.name);
   }
 
-  /** Remove all script-registry tools (called before re-loading .grove/tools.json). */
+  /** Remove all script-registry tools (called before re-loading .coding-cli/tools.json). */
   unregisterScriptTools(): void {
     for (const name of this.scriptToolNames) {
       this.tools.delete(name);

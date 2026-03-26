@@ -17,7 +17,7 @@ export const RE_READABLE_TOOLS: Set<string> = new Set([
   'find_files',
 ]);
 
-export function buildBuiltinTools(projectRoot: string, groveRoot?: string): ToolDef[] {
+export function buildBuiltinTools(projectRoot: string, cliRoot?: string): ToolDef[] {
   const tools = [
     readFileTool(projectRoot),
     codeSearchTool(projectRoot),
@@ -25,8 +25,8 @@ export function buildBuiltinTools(projectRoot: string, groveRoot?: string): Tool
     directoryTreeTool(projectRoot),
     findFilesTool(projectRoot),
   ];
-  if (groveRoot) {
-    tools.push(validateSelfTool(groveRoot));
+  if (cliRoot) {
+    tools.push(validateSelfTool(cliRoot));
   }
   return tools;
 }
@@ -289,7 +289,7 @@ function matchGlob(filename: string, pattern: string): boolean {
   return new RegExp(`^${re}$`, 'i').test(filename);
 }
 
-function validateSelfTool(groveRoot: string): ToolDef {
+function validateSelfTool(cliRoot: string): ToolDef {
   return {
     name: 'validate_self',
     description: 'Run TypeScript compilation check (tsc --noEmit) on coding-cli\'s own source. Use after proposing changes to coding-cli itself.',
@@ -299,7 +299,7 @@ function validateSelfTool(groveRoot: string): ToolDef {
       required: [],
     },
     async execute() {
-      return validateSelf(groveRoot);
+      return validateSelf(cliRoot);
     },
   };
 }

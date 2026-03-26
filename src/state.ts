@@ -26,7 +26,7 @@ export interface StateContext {
   /** Full tool definitions available to the model */
   tools: ToolDefinition[];
   /** coding-cli's own installation root (for self-introspection) */
-  groveRoot: string;
+  cliRoot: string;
 }
 
 /**
@@ -62,7 +62,7 @@ export function collectStateText(ctx: StateContext): string {
   // Self-awareness — coding-cli's own source location
   parts.push([
     '---[ STATE: self (coding-cli) ]---',
-    `Source root: ${ctx.groveRoot}`,
+    `Source root: ${ctx.cliRoot}`,
     'You can introspect and modify your own source using absolute paths to the source root.',
     'Use read_file, code_search, etc. with absolute paths to explore your own code.',
     'Use propose_edit / propose_write with absolute paths to modify yourself.',

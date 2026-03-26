@@ -63,7 +63,7 @@ export class AnthropicProvider implements Provider {
       ...(opts.baseURL ? { baseURL: opts.baseURL } : {}),
       timeout: 300_000,
     });
-    // Custom fetch providers (OAuth, z.ai) intercept the fetch call and return
+    // Custom fetch providers (z.ai) intercept the fetch call and return
     // a transformed Response — they don't support SSE streaming.
     this.supportsStreaming = !opts.fetch;
   }

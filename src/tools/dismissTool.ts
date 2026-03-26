@@ -147,7 +147,7 @@ function dismissOne(
 function dismissResultTool(getMessages: () => ApiMessage[], getFileHash: (filePath: string) => string | null): ToolDef {
   return {
     name: 'dismiss_result',
-    description: 'Dismiss a tool result from conversation history to free context tokens. For re-readable tools (read_file, list_directory, etc.), a reason is enough. For non-re-readable tools (code_search, fetch_url, etc.), provide a summary of key findings.',
+    description: 'Dismiss a tool result from conversation history to free context tokens. For re-readable tools (read_file, list_directory, etc.), a reason is enough. For non-re-readable tools (code_search, etc.), provide a summary of key findings.',
     input_schema: {
       type: 'object',
       properties: {
