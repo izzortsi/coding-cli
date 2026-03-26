@@ -15,6 +15,7 @@ import { pick } from './picker.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { RESET, DIM, UI } from './ui/index.js';
 import {
   setBlob,
   getBlob,
@@ -45,6 +46,8 @@ async function loadCustomCommands(projectRoot: string): Promise<CustomCommands |
 export interface CommandContext {
   staged: StagedWriteManager;
   stagedExec: StagedExecManager;
+  get fastApprove(): boolean;
+  setFastApprove: (value: boolean) => void;
   // Current state
   currentPreset: ModelPreset;
   systemPrompt: string;
@@ -107,8 +110,9 @@ const commands: Record<string, CommandHandler> = {
       '  /edit                    Compose message in $EDITOR',
       '  /edit system             Edit system prompt in $EDITOR',
       '  /paste                   Multi-line input mode (end with /end)',
-      '  /approve [.|all|sel]     Apply all pending items (., empty, all), or one by selector',
-      '  /reject [.|all|sel]      Discard all pending items (., empty, all), or one by selector',
+      '  /fast                    Toggle fast-approve mode (Enter to approve all)',
+      '  /approve [all|sel]       Approve all (all/empty) or one item by selector',
+      '  /reject [all|sel]        Reject all (all/empty) or one item by selector',
       '  /files                   List pending staged writes',
       '  /commit [message]        Stage all changes and git commit (alias for /git commit)',
       '  /git status              Show git status',
@@ -396,8 +400,8 @@ const commands: Record<string, CommandHandler> = {
     const pendingExecs = ctx.stagedExec.list();
     const totalCount = pendingWrites.length + pendingExecs.length;
 
-    // . or empty = approve all (shortcut for single-keystroke approval)
-    if (sel === 'all' || sel === '.' || totalCount === 0) {
+    // empty or all = approve all immediately
+    if (sel === 'all' || sel === '') {
       if (totalCount === 0) return 'Nothing pending.';
       const lines: string[] = [];
 
@@ -571,6 +575,14 @@ const commands: Record<string, CommandHandler> = {
       ));
     }
     return lines.join('\n');
+  },
+
+  fast: async (_args, ctx) => {
+    ctx.setFastApprove(!ctx.fastApprove);
+    if (ctx.fastApprove) {
+      return `${UI.danger}FAST${RESET} Fast-approve mode ON — press Enter to approve all staged items.\n${DIM}Use /fast to disable.${RESET}`;
+    }
+    return `${DIM}Fast-approve mode OFF — staged items require manual /approve.${RESET}`;
   },
 
   identity: async (args, ctx) => {

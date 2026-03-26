@@ -27,6 +27,8 @@ export interface StateContext {
   tools: ToolDefinition[];
   /** coding-cli's own installation root (for self-introspection) */
   cliRoot: string;
+  /** Whether fast-approve mode is active */
+  fastApprove: boolean;
 }
 
 /**
@@ -85,6 +87,15 @@ export function collectStateText(ctx: StateContext): string {
       ...lines,
       '',
       'Operator uses /approve <token> to apply, /reject <token> to discard.',
+    ].join('\n'));
+  }
+
+  // Fast-approve mode
+  if (ctx.fastApprove) {
+    parts.push([
+      '---[ STATE: fast_approve ]---',
+      'Fast-approve mode is ACTIVE. Operator approves all staged items by pressing Enter (no /approve needed).',
+      'Proceed as usual — stage writes and execs, they will be quickly approved.',
     ].join('\n'));
   }
 

@@ -1,4 +1,5 @@
 import readline from 'node:readline';
+import { spawn } from 'node:child_process';
 import type { Provider, ApiMessage, MessageContent, TextContent, ThinkingContent, ToolResultContent } from './types.js';
 import type { ModelPreset } from './presets.js';
 import { findPreset } from './presets.js';
@@ -62,6 +63,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let turnAbortController: AbortController | null = null;
   let lastCtrlC = 0;
   let currentMode: AgentMode = DEFAULT_MODE;
+  let fastApprove = false;
 
   // Self-awareness — detect coding-cli's own source root
   const cliRoot = getCliRoot();
@@ -146,6 +148,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       agentMode: currentMode.id,
       tools: registry.getDefinitions(),
       cliRoot,
+      get fastApprove() { return fastApprove; },
     };
   }
 
@@ -228,6 +231,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const toolIcon = getToolIcon(toolName);
         const preview = result.substring(0, 60).replace(/\n/g, ' ');
         process.stdout.write(`  ${status} ${toolIcon} ${FG.white}${toolName}${RESET} ${DIM}${preview}${RESET}\n`);
+        spawn('sh', ['-c', 'paplay --volume=39321 /usr/share/sounds/freedesktop/stereo/device-added.oga 2>/dev/null || printf "\\a"'], { stdio: 'ignore' }).unref();
         spinner.resume();
 
         // Track files read by read_file tool
@@ -512,6 +516,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const commandCtx: CommandContext = {
     staged,
     stagedExec,
+    get fastApprove() { return fastApprove; },
+    setFastApprove: (value: boolean) => { fastApprove = value; },
     providers: opts.providers,
     get currentPreset() { return currentPreset; },
     get systemPrompt() { return systemPrompt; },
@@ -720,6 +726,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const cols = process.stdout.columns || 80;
       console.log(renderUsageFooter(usageLine, ctxBar, cols));
 
+      // Turn-complete sound — distinct from per-tool beeps
+      spawn('sh', ['-c', 'paplay /usr/share/sounds/freedesktop/stereo/message-new-instant.oga 2>/dev/null || printf "\\a"'], { stdio: 'ignore' }).unref();
+
       // Auto-save
       syncChannelFromEngine();
       saveChannel(channel).catch(() => {});
@@ -739,13 +748,28 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const preset = `${fg256(75)}${currentPreset.id}${RESET}`;
     const ch = `${FG.gray}${channel.name}${RESET}`;
     const mode = `${currentMode.color}${currentMode.id}${RESET}`;
-    return `${preset} ${DIM}${BOX.dot}${RESET} ${ch} ${DIM}${BOX.dot}${RESET} ${mode} ${FG.brightCyan}❯${RESET} `;
+    const fast = fastApprove ? ` ${UI.danger}FAST${RESET}` : '';
+    return `${preset} ${DIM}${BOX.dot}${RESET} ${ch} ${DIM}${BOX.dot}${RESET} ${mode}${fast} ${FG.brightCyan}❯${RESET} `;
   }
 
   function prompt(): void {
     if (!running) return;
     rl.question(getPrompt(), async (input) => {
       const trimmed = input.trim();
+
+      // Fast-approve: Enter approves all pending items
+      if (!trimmed && fastApprove) {
+        const totalPending = staged.list().length + stagedExec.list().length;
+        if (totalPending > 0) {
+          const output = await handleCommand('/approve all', commandCtx);
+          if (output) console.log(output);
+          prompt();
+          return;
+        }
+        prompt();
+        return;
+      }
+
       if (!trimmed) { prompt(); return; }
 
       // /edit — open $EDITOR
