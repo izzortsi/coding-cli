@@ -33,12 +33,19 @@ function stripV1(url: string): string {
 export async function checkOllamaHealth(baseURL: string): Promise<boolean> {
   try {
     const base = stripV1(baseURL);
+    const url = `${base}/api/tags`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
-    const response = await fetch(`${base}/api/tags`, { signal: controller.signal });
+    const response = await fetch(url, { signal: controller.signal });
     clearTimeout(timer);
+    if (process.env.OLLAMA_DEBUG) {
+      process.stderr.write(`[ollama-discovery] ${url} -> ${response.status}\n`);
+    }
     return response.ok;
-  } catch {
+  } catch (err) {
+    if (process.env.OLLAMA_DEBUG) {
+      process.stderr.write(`[ollama-discovery] Health check error: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
     return false;
   }
 }
@@ -135,10 +142,23 @@ function buildDisplayName(modelName: string, details?: OllamaModel['details']): 
  * Returns empty array if Ollama is not running or has no models.
  */
 export async function discoverOllamaModels(baseURL: string): Promise<ModelPreset[]> {
+  const base = stripV1(baseURL);
+  if (process.env.OLLAMA_DEBUG) {
+    process.stderr.write(`[ollama-discovery] Probing ${base}/api/tags ...\n`);
+  }
+
   const healthy = await checkOllamaHealth(baseURL);
-  if (!healthy) return [];
+  if (!healthy) {
+    if (process.env.OLLAMA_DEBUG) {
+      process.stderr.write(`[ollama-discovery] Health check failed for ${base}\n`);
+    }
+    return [];
+  }
 
   const models = await listModels(baseURL);
+  if (process.env.OLLAMA_DEBUG) {
+    process.stderr.write(`[ollama-discovery] Found ${models.length} models\n`);
+  }
   if (models.length === 0) return [];
 
   // Sort by modification time (most recent first), cap at MAX_MODELS
