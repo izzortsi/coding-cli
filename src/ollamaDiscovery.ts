@@ -16,13 +16,26 @@ const DEFAULT_CONTEXT_WINDOW = 4096;
 const DEFAULT_MAX_TOKENS = 4096;
 
 /**
+ * Strip trailing /v1 or /v1/ from URL to get Ollama's native base.
+ * Users may configure OLLAMA_BASE_URL as http://host:11434/v1
+ * but the native Ollama API lives at http://host:11434/.
+ */
+function stripV1(url: string): string {
+  let u = url.replace(/\/+$/, '');
+  if (u.endsWith('/v1')) u = u.slice(0, -3);
+  return u;
+}
+
+/**
  * Check if Ollama is running at the given base URL.
+ * Uses /api/tags (same as Python provider_discovery) instead of root /.
  */
 export async function checkOllamaHealth(baseURL: string): Promise<boolean> {
   try {
+    const base = stripV1(baseURL);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
-    const response = await fetch(`${baseURL}/`, { signal: controller.signal });
+    const response = await fetch(`${base}/api/tags`, { signal: controller.signal });
     clearTimeout(timer);
     return response.ok;
   } catch {
@@ -47,7 +60,8 @@ interface OllamaModel {
  */
 async function listModels(baseURL: string): Promise<OllamaModel[]> {
   try {
-    const response = await fetch(`${baseURL}/api/tags`);
+    const base = stripV1(baseURL);
+    const response = await fetch(`${base}/api/tags`);
     if (!response.ok) return [];
     const data = await response.json();
     return data.models || [];
@@ -64,7 +78,8 @@ async function getContextLength(baseURL: string, modelName: string): Promise<num
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SHOW_TIMEOUT_MS);
-    const response = await fetch(`${baseURL}/api/show`, {
+    const base = stripV1(baseURL);
+    const response = await fetch(`${base}/api/show`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: modelName }),
