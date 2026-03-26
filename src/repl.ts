@@ -423,8 +423,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         ctrlXPending = false;
         const next = getNextMode(currentMode.id);
         switchMode(next);
-        process.stdout.write('\r\x1b[2K');
-        prompt();
+        // Update readline's prompt in-place (don't nest rl.question)
+        const newPrompt = getPrompt();
+        rl.setPrompt(newPrompt);
+        process.stdout.write('\r\x1b[2K' + newPrompt);
         return;
       }
       ctrlXPending = false;

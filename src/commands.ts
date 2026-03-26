@@ -4,7 +4,7 @@ import type { Provider, ApiMessage, TextContent } from './types.js';
 import type { ModelPreset } from './presets.js';
 import type { ChannelData } from './channel.js';
 import type { SubagentManager } from './subagent.js';
-import { getAvailablePresets, findPreset } from './presets.js';
+import { getAvailablePresets, getPresetsForProvider, findPreset } from './presets.js';
 import { AGENT_MODES, findMode as findAgentMode, type AgentMode } from './modes.js';
 import { listChannels, relativeTime } from './channel.js';
 import { getCompactionStats } from './compaction.js';

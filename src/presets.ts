@@ -29,7 +29,7 @@ export const PRESETS: ModelPreset[] = [
     id: 'sonnet-4-6',
     providerId: 'anthropic',
     modelId: 'claude-sonnet-4-6',
-    displayName: 'Claude Sonnet 4.6 (1M)',
+    displayName: 'Claude Sonnet 4.6',
     maxTokens: 16384,
     temperature: 0.7,
     thinkingBudget: 0,
@@ -60,17 +60,6 @@ export const PRESETS: ModelPreset[] = [
     needsIdentity: false,
   },
   {
-    id: 'glm-4.7',
-    providerId: 'zai',
-    modelId: 'GLM-4.7',
-    displayName: 'GLM-4.7',
-    maxTokens: 16384,
-    temperature: 0.7,
-    thinkingBudget: 0,
-    contextWindow: 200_000,
-    needsIdentity: false,
-  },
-  {
     id: 'glm-4.7-flash',
     providerId: 'zai',
     modelId: 'GLM-4.7-Flash',
@@ -79,17 +68,6 @@ export const PRESETS: ModelPreset[] = [
     temperature: 0.7,
     thinkingBudget: 0,
     contextWindow: 200_000,
-    needsIdentity: false,
-  },
-  {
-    id: 'glm-4.5-air',
-    providerId: 'zai',
-    modelId: 'GLM-4.5-Air',
-    displayName: 'GLM-4.5 Air',
-    maxTokens: 8192,
-    temperature: 0.7,
-    thinkingBudget: 0,
-    contextWindow: 128_000,
     needsIdentity: false,
   },
 ];
@@ -104,4 +82,11 @@ export function findPreset(idOrModelId: string): ModelPreset | undefined {
 
 export function getDefaultPreset(providerId: ProviderId): ModelPreset | undefined {
   return PRESETS.find(p => p.providerId === providerId);
+}
+
+/**
+ * Get presets filtered by a specific provider.
+ */
+export function getPresetsForProvider(providerId: string): ModelPreset[] {
+  return PRESETS.filter(p => p.providerId === providerId);
 }
