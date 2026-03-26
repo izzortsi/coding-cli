@@ -409,6 +409,7 @@ const commands: Record<string, CommandHandler> = {
 
       if (pendingExecs.length > 0) {
         const results = await ctx.stagedExec.approveAll();
+        const execOutputs: string[] = [];
         for (const r of results) {
           if (r.success) {
             const entry = pendingExecs.find(e => e.token === r.token);
@@ -416,19 +417,25 @@ const commands: Record<string, CommandHandler> = {
             const preview = (r.output || '').substring(0, 200).replace(/\n/g, ' ');
             console.log(`Executed: $ ${cmd}`);
             if (r.output) console.log(`  ${preview}${r.output!.length > 200 ? '...' : ''}`);
-            lines.push(`Executed: $ ${cmd}`);
+            execOutputs.push(`$ ${cmd}\n${r.output || '(no output)'}`);
           } else {
-            lines.push(`Exec failed (${r.token}): ${r.error}`);
+            execOutputs.push(`$ ???\nFailed: ${r.error}`);
           }
+        }
+        if (execOutputs.length > 0) {
+          const appliedWritesForLabel = pendingWrites.filter(w => !ctx.staged.pendingWrites.has(w.token));
+          const label = appliedWritesForLabel.length > 0 ? ' (other writes applied separately)' : '';
+          await ctx.sendTurn(`[Staged execs approved and executed${label}]:\n${execOutputs.join('\n---\n')}`);
         }
       }
 
       const appliedWrites = pendingWrites.filter(w => !ctx.staged.pendingWrites.has(w.token));
       if (appliedWrites.length > 0) {
         const files = appliedWrites.map(w => w.filepath).join(', ');
-        await ctx.sendTurn(`[Staged writes approved and applied: ${files}]`);
+        const label = pendingExecs.length > 0 ? ' (other execs completed separately)' : '';
+        await ctx.sendTurn(`[Staged writes approved and applied${label}: ${files}]`);
       }
-      return lines.join('\n');
+      return undefined;
     }
 
     if (totalCount === 0) return 'Nothing pending.';
@@ -452,8 +459,9 @@ const commands: Record<string, CommandHandler> = {
         console.log(`Executing: $ ${item.entry.command}`);
         const r = await ctx.stagedExec.approve(item.entry.token);
         if (r.success) {
-          const preview = (r.output || '').substring(0, 200).replace(/\n/g, ' ');
-          return r.output || '(no output)';
+          const msg = `[Staged exec approved and executed: $ ${item.entry.command}]\n${r.output || '(no output)'}`;
+          await ctx.sendTurn(msg);
+          return undefined;
         }
         return `Failed: ${r.error}`;
       }
@@ -486,7 +494,9 @@ const commands: Record<string, CommandHandler> = {
     const execResult = await ctx.stagedExec.approve(sel);
     if (execResult.success) {
       console.log(`Executed.`);
-      return execResult.output || '(no output)';
+      const msg = `[Staged exec approved and executed]\n${execResult.output || '(no output)'}`;
+      await ctx.sendTurn(msg);
+      return undefined;
     }
     return execResult.error || `No pending item matching "${sel}"`;
   },
