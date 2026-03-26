@@ -170,18 +170,34 @@ const commands: Record<string, CommandHandler> = {
       return undefined; // switchModel prints its own output
     }
 
-    // Interactive picker
-    const available = getAvailablePresets(new Set(ctx.providers.keys()));
-    if (available.length === 0) return 'No models available.';
+    // Step 1: Pick provider (skip if only one)
+    const providerIds = Array.from(ctx.providers.keys());
+    let selectedProviderId = providerIds[0];
 
-    const items = available.map((p, i) => ({
+    if (providerIds.length > 1) {
+      const providerItems = providerIds.map((id, i) => ({
+        label: `${i + 1}. ${ctx.providers.get(id)!.label}`,
+        value: id,
+        marker: id === ctx.currentPreset.providerId ? '(current)' : undefined,
+      }));
+
+      const chosenProvider = await pick(providerItems, 'Select a provider:');
+      if (!chosenProvider) return undefined; // cancelled
+      selectedProviderId = chosenProvider;
+    }
+
+    // Step 2: Pick model from selected provider
+    const models = getPresetsForProvider(selectedProviderId);
+    if (models.length === 0) return `No models available for provider "${selectedProviderId}".`;
+
+    const modelItems = models.map((p, i) => ({
       label: `${i + 1}. ${p.displayName}`,
       value: p.id,
-      detail: `${p.providerId} · ${(p.contextWindow / 1000).toFixed(0)}K ctx`,
+      detail: `${(p.contextWindow / 1000).toFixed(0)}K ctx`,
       marker: p.id === ctx.currentPreset.id ? '(current)' : undefined,
     }));
 
-    const selected = await pick(items, 'Select a model:');
+    const selected = await pick(modelItems, 'Select a model:');
     if (!selected) return undefined; // cancelled
 
     const preset = findPreset(selected);
@@ -222,7 +238,41 @@ const commands: Record<string, CommandHandler> = {
   new: async (args, ctx) => {
     const name = args.trim();
     if (!name) return 'Usage: /new <name>';
+
+    // Step 1: Pick provider (skip if only one)
+    const providerIds = Array.from(ctx.providers.keys());
+    let selectedProviderId = providerIds[0];
+
+    if (providerIds.length > 1) {
+      const providerItems = providerIds.map((id, i) => ({
+        label: `${i + 1}. ${ctx.providers.get(id)!.label}`,
+        value: id,
+      }));
+
+      const chosenProvider = await pick(providerItems, 'Select a provider:');
+      if (!chosenProvider) return undefined; // cancelled
+      selectedProviderId = chosenProvider;
+    }
+
+    // Step 2: Pick model from selected provider
+    const models = getPresetsForProvider(selectedProviderId);
+    if (models.length === 0) return `No models available for provider "${selectedProviderId}".`;
+
+    const modelItems = models.map((p, i) => ({
+      label: `${i + 1}. ${p.displayName}`,
+      value: p.id,
+      detail: `${(p.contextWindow / 1000).toFixed(0)}K ctx`,
+    }));
+
+    const selected = await pick(modelItems, 'Select a model:');
+    if (!selected) return undefined; // cancelled
+
+    const preset = findPreset(selected);
+    if (!preset) return 'Selection error.';
+
+    // Create new channel and switch to chosen model
     ctx.newChannel(name);
+    ctx.switchModel(preset);
     return undefined;
   },
 
