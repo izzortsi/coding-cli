@@ -1,5 +1,5 @@
 /**
- * System Prompts — Default operational prompts for grove-cli
+ * System Prompts — Default operational prompts for coding-cli
  *
  * Distilled from docs/grove/onboarding/ and docs/grove/CORE_PRINCIPLES.md.
  * These are injected as the system prompt unless overridden by /system.
@@ -10,7 +10,7 @@ import path from 'node:path';
 
 // --- Default System Prompt ---
 
-export const DEFAULT_SYSTEM_PROMPT = `You are an AI coding assistant operating inside grove-cli, an interactive terminal environment for multi-turn conversations with tool use and staged writes.
+export const DEFAULT_SYSTEM_PROMPT = `You are an AI coding assistant operating inside coding-cli, an interactive terminal environment for multi-turn conversations with tool use and staged writes.
 
 ## Environment
 

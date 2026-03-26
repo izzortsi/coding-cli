@@ -28,7 +28,7 @@ function getEditor(): string {
  * @param fileSuffix — File extension for syntax highlighting (default: '.md')
  */
 export function openEditor(initialContent?: string, fileSuffix?: string): string | null {
-  const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'grove-cli-'));
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'coding-cli-'));
   const tmpFile = path.join(tmpDir, `prompt${fileSuffix || '.md'}`);
 
   try {

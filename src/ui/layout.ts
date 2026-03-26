@@ -141,7 +141,7 @@ export function renderWelcome(preset: ModelPreset, channel: ChannelData, project
 
   const lines = [
     '',
-    `  ${fg256(75)}╭─${RESET} ${BOLD}grove-cli${RESET} ${DIM}v0.2.0${RESET}`,
+    `  ${fg256(75)}╭─${RESET} ${BOLD}coding-cli${RESET} ${DIM}v0.1.0${RESET}`,
     `  ${fg256(75)}│${RESET}`,
     `  ${fg256(75)}│${RESET}  ${UI.label}model${RESET}    ${preset.displayName} ${DIM}(${preset.providerId})${RESET}`,
     `  ${fg256(75)}│${RESET}  ${UI.label}context${RESET}  ${ctxK} tokens`,

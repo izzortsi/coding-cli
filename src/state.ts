@@ -25,7 +25,7 @@ export interface StateContext {
   agentMode: string;
   /** Full tool definitions available to the model */
   tools: ToolDefinition[];
-  /** grove-cli's own installation root (for self-introspection) */
+  /** coding-cli's own installation root (for self-introspection) */
   groveRoot: string;
 }
 
@@ -59,9 +59,9 @@ export function collectStateText(ctx: StateContext): string {
   const identityState = formatIdentityState(ctx.channel.identity || {});
   if (identityState) parts.push(identityState);
 
-  // Self-awareness — grove-cli's own source location
+  // Self-awareness — coding-cli's own source location
   parts.push([
-    '---[ STATE: self (grove-cli) ]---',
+    '---[ STATE: self (coding-cli) ]---',
     `Source root: ${ctx.groveRoot}`,
     'You can introspect and modify your own source using absolute paths to the source root.',
     'Use read_file, code_search, etc. with absolute paths to explore your own code.',

@@ -72,7 +72,7 @@ export interface CommandContext {
   /** Inject a user message into the conversation without triggering a model turn */
   injectUserMessage: (text: string) => void;
   showSidebar?: () => Promise<void>;
-  /** grove-cli's own source root for self-modification */
+  /** coding-cli's own source root for self-modification */
   groveRoot: string;
   quit: () => void;
 }
@@ -115,7 +115,7 @@ const commands: Record<string, CommandHandler> = {
       '  /git commit [message]    Stage all + commit (auto-generates message from diff)',
       '  /git branch <name> [src] Create branch (from src or current)',
       '  /git pr <base> [title]   Create PR to base branch (auto-generates title/body)',
-      '  /rebuild                 Rebuild grove-cli after self-modification',
+      '  /rebuild                 Rebuild coding-cli after self-modification',
       '  /sidebar                 Open channel sidebar (same as Ctrl+B)',
       '  /quit                    Save and exit',
     ];
@@ -693,7 +693,7 @@ const commands: Record<string, CommandHandler> = {
   rebuild: async (_args, ctx) => {
     const result = rebuildSelf(ctx.groveRoot);
     if (result.success) {
-      return `Build successful. Restart grove-cli to load changes.\n${result.output}`;
+      return `Build successful. Restart coding-cli to load changes.\n${result.output}`;
     }
     return `Build failed:\n${result.output}`;
   },

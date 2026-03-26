@@ -1,7 +1,7 @@
 /**
  * Channel — Conversation persistence
  *
- * Each channel is a named conversation saved as JSON in ~/.grove-cli/channels/.
+ * Each channel is a named conversation saved as JSON in ~/.coding-cli/channels/.
  * Stores messages, model preset, system prompt, and metadata.
  *
  * A lightweight index file (channels/index.json) maps channel IDs to summaries

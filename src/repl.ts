@@ -62,7 +62,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let lastCtrlC = 0;
   let currentMode: AgentMode = DEFAULT_MODE;
 
-  // Self-awareness — detect grove-cli's own source root
+  // Self-awareness — detect coding-cli's own source root
   const groveRoot = getGroveRoot();
 
   // Set up tools

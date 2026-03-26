@@ -292,7 +292,7 @@ function matchGlob(filename: string, pattern: string): boolean {
 function validateSelfTool(groveRoot: string): ToolDef {
   return {
     name: 'validate_self',
-    description: 'Run TypeScript compilation check (tsc --noEmit) on grove-cli\'s own source. Use after proposing changes to grove-cli itself.',
+    description: 'Run TypeScript compilation check (tsc --noEmit) on coding-cli\'s own source. Use after proposing changes to coding-cli itself.',
     input_schema: {
       type: 'object',
       properties: {},
