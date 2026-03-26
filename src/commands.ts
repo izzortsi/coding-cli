@@ -6,8 +6,8 @@ import type { ChannelData } from './channel.js';
 import type { SubagentManager } from './subagent.js';
 import { getAvailablePresets, getPresetsForProvider, findPreset } from './presets.js';
 import { AGENT_MODES, findMode as findAgentMode, type AgentMode } from './modes.js';
-import { listChannels, relativeTime } from './channel.js';
-import { getCompactionStats } from './compaction.js';
+import { listChannels, relativeTime, loadChannel as loadChannelData, loadChannelByName } from './channel.js';
+import { getCompactionStats, compactExternalChannel } from './compaction.js';
 import { BOOTSTRAP_PROMPT } from './prompts.js';
 import { buildBootstrapSteps, executeBootstrap } from './bootstrap.js';
 import { rebuildSelf } from './selfAware.js';
@@ -15,7 +15,7 @@ import { pick } from './picker.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { RESET, DIM, FG, UI } from './ui/index.js';
+import { RESET, BOLD, DIM, FG, UI } from './ui/index.js';
 import {
   setBlob,
   getBlob,
@@ -100,6 +100,7 @@ const commands: Record<string, CommandHandler> = {
       '  /channel                 Switch channel (alias for /load)',
       '  /list                    List all channels',
       '  /compact [keep]          Compact older messages into summary (keep last N, default 20)',
+      '  /read <channel>          Read another channel — compact its history into current context',
       '  /info                    Show channel info and compaction stats',
       '  /bootstrap               Orient the model — scans project structure, key files',
       '  /state                   Show ephemeral state (what the model sees)',
@@ -324,6 +325,58 @@ const commands: Record<string, CommandHandler> = {
   compact: async (args, ctx) => {
     const keepRecent = parseInt(args.trim(), 10) || 20;
     return ctx.compact(keepRecent);
+  },
+
+  read: async (args, ctx) => {
+    const selector = args.trim();
+    if (!selector) {
+      // Interactive picker from channel list
+      const channels = await listChannels();
+      const otherChannels = channels.filter(c => c.id !== ctx.channel.id);
+      if (otherChannels.length === 0) return 'No other channels to read from.';
+
+      const items = otherChannels.map((c, i) => ({
+        label: `${i + 1}. ${c.name}`,
+        value: c.id,
+        detail: `${c.messageCount} msgs · ${relativeTime(c.lastActivity)}`,
+      }));
+
+      const selected = await pick(items, 'Read from which channel?');
+      if (!selected) return undefined; // cancelled
+      return commands.read(selected, ctx);
+    }
+
+    // Load by id or name
+    let sourceChannel = await loadChannelData(selector);
+    if (!sourceChannel) {
+      sourceChannel = await loadChannelByName(selector);
+    }
+    if (!sourceChannel) return `Channel not found: "${selector}". Use /list to see channels.`;
+    if (sourceChannel.id === ctx.channel.id) return 'Cannot read from the current channel.';
+
+    const provider = ctx.providers.get(ctx.currentPreset.providerId)!.provider;
+
+    try {
+      const result = await compactExternalChannel(sourceChannel, provider, ctx.currentPreset.modelId);
+
+      // Inject as compaction with source metadata
+      const taggedSummary = [
+        `[Imported from channel "${result.sourceChannelName}" (${result.sourceChannelId}), ${result.messageCount} messages]`,
+        '',
+        result.summary,
+      ].join('\n');
+
+      if (!ctx.channel.compactionSummaries) ctx.channel.compactionSummaries = [];
+      ctx.channel.compactionSummaries.push(taggedSummary);
+
+      return [
+        `${UI.success} Read ${BOLD}${result.messageCount}${RESET} messages from "${result.sourceChannelName}"`,
+        `${DIM}Summary: ${result.summary.length} chars, injected as compaction${RESET}`,
+        `${DIM}The model will see this context in its system prompt.${RESET}`,
+      ].join('\n');
+    } catch (err) {
+      return `Failed to read channel: ${err instanceof Error ? err.message : String(err)}`;
+    }
   },
 
   info: async (_args, ctx) => {

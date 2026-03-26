@@ -107,6 +107,65 @@ export async function compactChannel(
   };
 }
 
+export interface ExternalCompactionResult {
+  summary: string;
+  sourceChannelId: string;
+  sourceChannelName: string;
+  messageCount: number;
+}
+
+/**
+ * Compact an external channel's messages into a summary for injection
+ * into a different channel. Does NOT modify the source channel.
+ */
+export async function compactExternalChannel(
+  sourceChannel: ChannelData,
+  provider: Provider,
+  model: string,
+): Promise<ExternalCompactionResult> {
+  const allMessages = sourceChannel.messages;
+  if (allMessages.length === 0) {
+    throw new Error(`Channel "${sourceChannel.name}" has no messages.`);
+  }
+
+  const historyText = allMessages.map(formatMessageForSummary).join('\n\n');
+
+  const config: ChatConfig = {
+    systemPrompt: COMPACTION_SYSTEM_PROMPT,
+    maxTokens: 4096,
+    temperature: 0.3,
+  };
+
+  const response = await provider.chat(
+    [{
+      role: 'user',
+      content: [{
+        type: 'text',
+        text: `Summarize the following conversation history from channel "${sourceChannel.name}" (${allMessages.length} messages):\n\n${historyText}`,
+      } as TextContent],
+    }],
+    model,
+    [],
+    config,
+  );
+
+  const summary = response.content
+    .filter((b): b is TextContent => b.type === 'text')
+    .map(b => b.text)
+    .join('\n');
+
+  if (!summary.trim()) {
+    throw new Error('Compaction of external channel produced empty summary.');
+  }
+
+  return {
+    summary,
+    sourceChannelId: sourceChannel.id,
+    sourceChannelName: sourceChannel.name,
+    messageCount: allMessages.length,
+  };
+}
+
 /**
  * Get the active (non-dormant) messages from a channel.
  */
