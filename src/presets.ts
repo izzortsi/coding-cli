@@ -1,4 +1,4 @@
-export type ProviderId = 'zai';
+export type ProviderId = 'anthropic' | 'zai';
 
 export interface ModelPreset {
   id: string;
@@ -13,6 +13,30 @@ export interface ModelPreset {
 }
 
 export const PRESETS: ModelPreset[] = [
+  // --- Anthropic ---
+  {
+    id: 'opus-4-6',
+    providerId: 'anthropic',
+    modelId: 'claude-opus-4-6',
+    displayName: 'Claude Opus 4.6',
+    maxTokens: 32768,
+    temperature: 1,
+    thinkingBudget: 16384,
+    contextWindow: 1_000_000,
+    needsIdentity: true,
+  },
+  {
+    id: 'sonnet-4-6',
+    providerId: 'anthropic',
+    modelId: 'claude-sonnet-4-6',
+    displayName: 'Claude Sonnet 4.6 (1M)',
+    maxTokens: 16384,
+    temperature: 0.7,
+    thinkingBudget: 0,
+    contextWindow: 1_000_000,
+    needsIdentity: true,
+  },
+  // --- z.ai ---
   {
     id: 'glm-5',
     providerId: 'zai',

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import dotenv from 'dotenv';
-import { initProvider } from './auth.js';
+import { detectAuth, runOAuthLogin, runOAuthLogout } from './auth.js';
 import { startRepl } from './repl.js';
 import { getAvailablePresets, getDefaultPreset, findPreset } from './presets.js';
 import { listChannels, loadChannel } from './channel.js';
@@ -50,11 +50,27 @@ async function runSingleTurn(flags: ParsedFlags): Promise<void> {
   const quiet = flags.quiet;
   const jsonOutput = flags.format === 'json';
 
-  const auth = initProvider();
+  const auth = detectAuth();
+  if (!auth) {
+    if (!quiet) {
+      console.error('No authentication configured.');
+      console.error('  coding-cli auth       — OAuth (Claude Pro/Max)');
+      console.error('  ANTHROPIC_API_KEY=... — API key');
+      console.error('  ZHIPU_API_KEY=...     — z.ai');
+    }
+    process.exit(1);
+  }
 
-  const preset = getDefaultPreset('zai');
-  if (!preset) {
-    if (!quiet) console.error('No model presets available.');
+  const available = getAvailablePresets(new Set(auth.providers.keys()));
+  if (available.length === 0) {
+    if (!quiet) console.error('No model presets available for configured providers.');
+    process.exit(1);
+  }
+
+  const preset = getDefaultPreset(auth.defaultId as any) || available[0];
+  const providerEntry = auth.providers.get(preset.providerId);
+  if (!providerEntry) {
+    if (!quiet) console.error(`Provider "${preset.providerId}" not available.`);
     process.exit(1);
   }
 
@@ -63,7 +79,7 @@ async function runSingleTurn(flags: ParsedFlags): Promise<void> {
   const registry = new ToolRegistry();
   for (const tool of buildBuiltinTools(projectRoot)) registry.register(tool);
 
-  const engine = new Engine(auth.provider, registry, {
+  const engine = new Engine(providerEntry.provider, registry, {
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     maxTokens: preset.maxTokens,
     temperature: preset.temperature,
@@ -109,15 +125,27 @@ async function runSingleTurn(flags: ParsedFlags): Promise<void> {
 async function main(): Promise<void> {
   const command = process.argv[2];
 
+  if (command === 'auth') {
+    await runOAuthLogin();
+    return;
+  }
+
+  if (command === 'logout') {
+    await runOAuthLogout();
+    return;
+  }
+
   if (command === 'help' || command === '--help' || command === '-h') {
     console.log(`
-coding-cli — Interactive CLI for LLM conversations with tool use (z.ai)
+coding-cli — Interactive CLI for LLM conversations with tool use
 
 Usage:
   coding-cli                        Start interactive REPL
   coding-cli -p "prompt"            Run a single turn and exit
   coding-cli -p "prompt" -f json    Output structured JSON
   coding-cli -p "prompt" -q         Suppress non-output messages
+  coding-cli auth                   Authenticate via OAuth
+  coding-cli logout                 Clear OAuth tokens
   coding-cli help                   Show this help
 
 Flags (non-interactive mode):
@@ -126,8 +154,10 @@ Flags (non-interactive mode):
   -q, --quiet            Suppress non-output messages (only with -p)
 
 Environment:
-  ZHIPU_API_KEY          z.ai API key (required)
-  ZAI_BASE_URL           z.ai base URL (default: https://api.z.ai/api/coding/paas/v4)
+  ANTHROPIC_API_KEY      Anthropic API key
+  ANTHROPIC_BASE_URL     Custom base URL
+  ZHIPU_API_KEY          z.ai API key
+  ZAI_BASE_URL           z.ai base URL
   CODING_CLI_DATA_DIR    Data directory (default: ~/.coding-cli)
 `.trim());
     return;
@@ -148,16 +178,28 @@ Environment:
 
   console.log('coding-cli v0.1.0\n');
 
-  const auth = initProvider();
-  console.log(`Auth: ${auth.label} [${auth.providerId}]`);
-
-  const available = getAvailablePresets(new Set([auth.providerId]));
-  if (available.length === 0) {
-    console.error('No model presets available.');
+  const auth = detectAuth();
+  if (!auth) {
+    console.error('No authentication configured.');
+    console.error('  coding-cli auth       — OAuth (Claude Pro/Max)');
+    console.error('  ANTHROPIC_API_KEY=... — API key');
+    console.error('  ZHIPU_API_KEY=...     — z.ai');
     process.exit(1);
   }
 
-  const initialPreset = getDefaultPreset('zai') || available[0];
+  // Show configured providers
+  for (const [id, entry] of auth.providers) {
+    console.log(`Auth: ${entry.label} [${id}]`);
+  }
+
+  // Find available presets and pick default
+  const available = getAvailablePresets(new Set(auth.providers.keys()));
+  if (available.length === 0) {
+    console.error('No model presets available for configured providers.');
+    process.exit(1);
+  }
+
+  const initialPreset = getDefaultPreset(auth.defaultId as any) || available[0];
   const projectRoot = process.cwd();
 
   // Try to resume most recent channel
@@ -166,7 +208,7 @@ Environment:
   if (channels.length > 0) {
     const recent = channels[0];
     const preset = findPreset(recent.presetId);
-    if (preset) {
+    if (preset && auth.providers.has(preset.providerId)) {
       resumeChannel = await loadChannel(recent.id) || undefined;
       if (resumeChannel) {
         console.log(`Resuming: ${recent.name} (${recent.id}) · ${recent.messageCount} msgs`);
@@ -174,12 +216,8 @@ Environment:
     }
   }
 
-  // Build providers map (single entry for z.ai)
-  const providers = new Map<string, { provider: typeof auth.provider; label: string }>();
-  providers.set(auth.providerId, { provider: auth.provider, label: auth.label });
-
   await startRepl({
-    providers,
+    providers: auth.providers,
     initialPreset,
     projectRoot,
     resumeChannel: resumeChannel || undefined,
