@@ -12,7 +12,7 @@ export class StagedWriteManager {
   }
 
   getTools(): ToolDef[] {
-    return [this.proposeWriteTool(), this.proposeEditTool(), this.proposePatchTool()];
+    return [this.proposeWriteTool(), this.proposeEditTool(), this.proposePatchTool(), this.rejectWriteTool()];
   }
 
   list(): StagedWrite[] {
@@ -38,7 +38,20 @@ export class StagedWriteManager {
         if (!current.includes(write.searchContent)) {
           return { success: false, error: 'Search content not found in file (may have changed)' };
         }
-        await fs.writeFile(write.filepath, current.split(write.searchContent).join(write.content), 'utf-8');
+        // Only enforce uniqueness for user-supplied edits (propose_edit).
+        // Patch hunks (validated: true) were pre-validated at staging time against
+        // the actual file content, so they are allowed to match multiple occurrences
+        // (the first match is the intended one, consistent with how applyHunk found it).
+        if (!write.validated) {
+          const occurrences = current.split(write.searchContent).length - 1;
+          if (occurrences > 1) {
+            return {
+              success: false,
+              error: `Search content appears ${occurrences} times in file — use a more unique search string that matches exactly one location`,
+            };
+          }
+        }
+        await fs.writeFile(write.filepath, current.replace(write.searchContent, write.content), 'utf-8');
       }
       this.pendingWrites.delete(write.token);
       return { success: true, filepath: write.filepath };
@@ -222,7 +235,10 @@ export class StagedWriteManager {
               const result = this.applyHunk(currentContent, hunk);
               if (result.error) {
                 validationErrors.push(`Update File: ${op.filePath}: ${result.error}`);
+                break; // Stop processing hunks for this file on first error
               } else {
+                // Update currentContent so subsequent hunks see prior changes
+                if (result.newContent) currentContent = result.newContent;
                 const token = this.generateToken(filepath, result.searchBlock!);
                 stagedEntries.push({
                   filepath,
@@ -268,6 +284,38 @@ export class StagedWriteManager {
         }
 
         return `Staged ${stagedEntries.length} operation(s) from patch:\n${summaryLines.join('\n')}\nRationale: ${rationale}\nUse /approve to apply all.`;
+      },
+    };
+  }
+
+  private rejectWriteTool(): ToolDef {
+    return {
+      name: 'reject_write',
+      description: 'Reject (cancel) a previously staged write by its token. Use when validate_self reveals errors in a staged change, or when you realize a proposed change is wrong.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          token: { type: 'string', description: 'Token of the staged write to reject (from the propose_edit/propose_write response)' },
+          reason: { type: 'string', description: 'Why the write is being rejected' },
+        },
+        required: ['token', 'reason'],
+      },
+      execute: async (args) => {
+        const token = args.token as string;
+        const reason = args.reason as string;
+        const write = this.pendingWrites.get(token);
+        if (!write) {
+          // Try prefix match
+          for (const [t, w] of this.pendingWrites) {
+            if (t.startsWith(token)) {
+              this.pendingWrites.delete(t);
+              return `Rejected staged write for ${path.relative(this.projectRoot, w.filepath)} (token: ${t})\nReason: ${reason}`;
+            }
+          }
+          return `Error: No pending write found for token "${token}". Current pending: ${this.pendingWrites.size} write(s).`;
+        }
+        this.pendingWrites.delete(token);
+        return `Rejected staged write for ${path.relative(this.projectRoot, write.filepath)} (token: ${token})\nReason: ${reason}`;
       },
     };
   }
@@ -347,7 +395,7 @@ export class StagedWriteManager {
     return operations;
   }
 
-  private applyHunk(fileContent: string, hunk: PatchHunk): { searchBlock?: string; replaceBlock?: string; error?: string } {
+  private applyHunk(fileContent: string, hunk: PatchHunk): { searchBlock?: string; replaceBlock?: string; newContent?: string; error?: string } {
     const fileLines = fileContent.split('\n');
 
     // Find the context line in the file
@@ -389,9 +437,16 @@ export class StagedWriteManager {
       }
     }
 
+    const newContent = [
+      ...fileLines.slice(0, contextIdx),
+      ...replaceLines,
+      ...fileLines.slice(filePos),
+    ].join('\n');
+
     return {
       searchBlock: searchLines.join('\n'),
       replaceBlock: replaceLines.join('\n'),
+      newContent,
     };
   }
 }

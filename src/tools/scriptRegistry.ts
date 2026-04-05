@@ -62,13 +62,15 @@ function inferCommand(scriptPath: string): string[] {
   switch (ext) {
     case '.py':   return ['python3', scriptPath];
     case '.sh':   return ['bash', scriptPath];
+    case '.js':   return ['node', scriptPath];
+    case '.ts':   return ['npx', 'tsx', scriptPath];
     case '.lisp':
     case '.lsp':  return ['sbcl', '--script', scriptPath];
     case '.scm':  return ['guile', scriptPath];
     default:
       throw new Error(
         `Cannot infer runtime for "${scriptPath}" (ext: "${ext}"). ` +
-        `Supported: .py, .sh, .lisp, .lsp, .scm. Or set "command" explicitly.`
+        `Supported: .py, .sh, .js, .ts, .lisp, .lsp, .scm. Or set "command" explicitly.`
       );
   }
 }

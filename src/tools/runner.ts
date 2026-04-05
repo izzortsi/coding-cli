@@ -22,7 +22,9 @@ export async function runScriptTool(
     proc.stdout.on('data', (data: Buffer) => {
       if (stdout.length < MAX_OUTPUT_BYTES) stdout += data.toString();
     });
-    proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
+    proc.stderr.on('data', (data: Buffer) => {
+      if (stderr.length < MAX_OUTPUT_BYTES) stderr += data.toString();
+    });
 
     proc.stdin.write(JSON.stringify(args));
     proc.stdin.end();
@@ -42,7 +44,7 @@ export async function runScriptTool(
           : stdout;
         resolve(truncated);
       } else {
-        reject(new Error(`Script exited with code ${code}: ${stderr || stdout}`));
+        reject(new Error(`Script exited with code ${code}: ${(stderr || stdout).substring(0, 2000)}`));
       }
     });
 
