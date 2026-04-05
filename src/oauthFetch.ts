@@ -77,19 +77,19 @@ export function createOAuthFetch(tokenGetter: TokenGetter): typeof globalThis.fe
 
     // --- Transform body ---
     let body = init?.body;
-    const contentType = headers.get('content-type') || '';
 
-    if (body && contentType.includes('application/json')) {
+    if (body && typeof body === 'string') {
       try {
-        const bodyStr = typeof body === 'string' ? body : new TextDecoder().decode(body as ArrayBuffer);
-        const bodyObj = JSON.parse(bodyStr);
+        const bodyObj = JSON.parse(body);
         const transformed = transformRequestBody(bodyObj);
         body = JSON.stringify(transformed);
-        headers.set('content-length', String(new TextEncoder().encode(body as string).length));
       } catch {
         // Not valid JSON — pass through
       }
     }
+
+    // Delete content-length — let fetch recalculate after body transformation
+    headers.delete('content-length');
 
     // --- Forward request ---
     const response = await globalThis.fetch(transformedUrl, {
@@ -106,6 +106,32 @@ export function createOAuthFetch(tokenGetter: TokenGetter): typeof globalThis.fe
       const stripped = text.replace(RESPONSE_TOOL_NAME_RE, '"name": "$1"');
 
       return new Response(stripped, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    }
+
+    // For streaming responses (SSE), strip mcp_ prefix from tool names in the stream
+    if (response.body && respContentType.includes('text/event-stream')) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      const encoder = new TextEncoder();
+
+      const stream = new ReadableStream({
+        async pull(controller) {
+          const { done, value } = await reader.read();
+          if (done) {
+            controller.close();
+            return;
+          }
+          let text = decoder.decode(value, { stream: true });
+          text = text.replace(RESPONSE_TOOL_NAME_RE, '"name": "$1"');
+          controller.enqueue(encoder.encode(text));
+        },
+      });
+
+      return new Response(stream, {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,
