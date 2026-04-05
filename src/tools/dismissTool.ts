@@ -7,6 +7,7 @@
 
 import type { ApiMessage, ToolDef, ToolUseContent, ToolResultContent } from '../types.js';
 import { RE_READABLE_TOOLS } from './builtins.js';
+import { CHARS_PER_TOKEN } from '../compaction.js';
 
 const DISMISSED_PREFIX = '[Dismissed:';
 
@@ -25,12 +26,12 @@ export function buildDismissTools(
 }
 
 /** Check if a tool_result has already been dismissed. */
-function isDismissed(content: string): boolean {
+export function isDismissed(content: string): boolean {
   return content.startsWith(DISMISSED_PREFIX);
 }
 
 /** Find the tool_use block matching a tool_use_id across all messages. */
-function findToolUse(messages: ApiMessage[], toolUseId: string): ToolUseContent | null {
+export function findToolUse(messages: ApiMessage[], toolUseId: string): ToolUseContent | null {
   for (const msg of messages) {
     if (msg.role !== 'assistant') continue;
     for (const block of msg.content) {
@@ -43,7 +44,7 @@ function findToolUse(messages: ApiMessage[], toolUseId: string): ToolUseContent 
 }
 
 /** Find the tool_result block matching a tool_use_id across all messages. */
-function findToolResult(messages: ApiMessage[], toolUseId: string): ToolResultContent | null {
+export function findToolResult(messages: ApiMessage[], toolUseId: string): ToolResultContent | null {
   for (const msg of messages) {
     if (msg.role !== 'user') continue;
     for (const block of msg.content) {
@@ -63,6 +64,15 @@ function buildReReadableStub(
   reason?: string,
 ): string {
   const toolName = toolUse.name;
+  const reasonSuffix = reason ? ` Reason: ${reason}` : '';
+
+  // lisp_eval: reference the expression for re-evaluation
+  if (toolName === 'lisp_eval') {
+    const expr = ((toolUse.input.expression as string) || '').slice(0, 120);
+    const exprPreview = expr.length < ((toolUse.input.expression as string) || '').length ? expr + '…' : expr;
+    return `[Dismissed: lisp_eval — Re-evaluate if needed: ${exprPreview}.${reasonSuffix}]`;
+  }
+
   let pathStr = '';
   if (toolName === 'read_file') {
     pathStr = (toolUse.input.file_path as string) || 'unknown';
@@ -73,7 +83,6 @@ function buildReReadableStub(
   const lineCount = originalContent.split('\n').length;
   const hash = getFileHash(pathStr);
   const hashStr = hash ? `, hash: ${hash}` : '';
-  const reasonSuffix = reason ? ` Reason: ${reason}` : '';
   return `[Dismissed: ${pathStr}, ${lineCount} lines${hashStr} — re-read with ${toolName} if needed.${reasonSuffix}]`;
 }
 
@@ -83,9 +92,9 @@ function buildNonReReadableStub(toolName: string, summary: string, reason?: stri
   return `[Dismissed: ${toolName} — Summary: ${summary}.${reasonSuffix}]`;
 }
 
-/** Estimate tokens freed by replacement (approximate, ~4 chars per token). */
+/** Estimate tokens freed by replacement (approximate, via CHARS_PER_TOKEN). */
 function estimateTokensFreed(originalLength: number, stubLength: number): number {
-  return Math.max(0, Math.floor((originalLength - stubLength) / 4));
+  return Math.max(0, Math.floor((originalLength - stubLength) / CHARS_PER_TOKEN));
 }
 
 interface DismissOneResult {
