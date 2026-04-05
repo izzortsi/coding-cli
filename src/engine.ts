@@ -15,9 +15,12 @@ import type { ToolRegistry } from './tools/registry.js';
 
 const DEFAULT_MAX_STEPS = 25;
 
+/** Cap tool result content to prevent single results from bloating context. ~3K tokens. */
+const MAX_TOOL_RESULT_CHARS = 12_000;
+
 export interface EngineHooks {
   onBeforeApiCall?: (messages: ApiMessage[]) => ApiMessage[] | Promise<ApiMessage[]>;
-  onAfterToolResult?: (toolName: string, result: string) => void;
+  onAfterToolResult?: (toolName: string, result: string, input?: Record<string, unknown>) => void;
   onTurnComplete?: (result: TurnResult) => void;
   onTextDelta?: (text: string) => void;
   onThinkingDelta?: (text: string) => void;
@@ -76,6 +79,9 @@ export class Engine {
       lastCallInputTokens: 0,
     };
     const useStreaming = !!this.provider.chatStream;
+
+    // Save message count for O(1) error rollback
+    const rollbackLength = this.messages.length;
 
     // Append user message
     const userMsg: ApiMessage = { role: 'user', content: [{ type: 'text', text: userText }] };
@@ -144,6 +150,8 @@ export class Engine {
         if (response.usage) {
           result.usage.inputTokens += response.usage.inputTokens;
           result.usage.outputTokens += response.usage.outputTokens;
+          result.usage.cacheCreationInputTokens = (result.usage.cacheCreationInputTokens || 0) + (response.usage.cacheCreationInputTokens || 0);
+          result.usage.cacheReadInputTokens = (result.usage.cacheReadInputTokens || 0) + (response.usage.cacheReadInputTokens || 0);
           result.lastCallInputTokens = response.usage.inputTokens;
         }
 
@@ -159,12 +167,24 @@ export class Engine {
           break;
         }
 
-        // Execute tool calls (not streamed — collect then execute)
-        const toolResults: ToolResultContent[] = [];
-        for (const tc of toolCalls) {
+        // Execute tool calls in parallel — order is preserved via Promise.all.
+        // This significantly speeds up steps with multiple independent calls.
+        const toolPromises = toolCalls.map(async (tc) => {
           const start = Date.now();
           const tr = await this.registry.execute(tc);
           const durationMs = Date.now() - start;
+          return { tc, tr, durationMs };
+        });
+        const toolExecutions = await Promise.all(toolPromises);
+
+        const toolResults: ToolResultContent[] = [];
+        for (const { tc, tr, durationMs } of toolExecutions) {
+          // Truncate oversized results to prevent context bloat
+          if (tr.content.length > MAX_TOOL_RESULT_CHARS) {
+            const truncated = tr.content.length - MAX_TOOL_RESULT_CHARS;
+            tr.content = tr.content.slice(0, MAX_TOOL_RESULT_CHARS)
+              + `\n\n[Truncated: ${truncated} chars removed. Re-run with narrower scope if needed.]`;
+          }
           toolResults.push(tr);
           result.toolCalls.push({
             name: tc.name,
@@ -172,7 +192,7 @@ export class Engine {
             isError: tr.is_error || false,
             durationMs,
           });
-          this.config.hooks?.onAfterToolResult?.(tc.name, tr.content);
+          this.config.hooks?.onAfterToolResult?.(tc.name, tr.content, tc.input as Record<string, unknown>);
         }
 
         // Record tool results as user message
@@ -186,10 +206,7 @@ export class Engine {
       }
     } catch (error) {
       // Roll back all messages from this turn to prevent corrupted history
-      for (const msg of result.messages) {
-        const idx = this.messages.indexOf(msg);
-        if (idx >= 0) this.messages.splice(idx, 1);
-      }
+      this.messages.length = rollbackLength;
       throw error;
     }
 
@@ -208,42 +225,67 @@ function extractText(content: MessageContent[]): string {
 }
 
 /**
- * Strip orphaned tool_use and tool_result blocks.
- * Pass 1: Remove tool_use without matching tool_result after it.
- * Pass 2: Remove tool_result without matching tool_use before it.
+ * Strip orphaned tool_use and tool_result blocks using ID matching.
+ *
+ * Pass 1: For each assistant message with tool_use blocks, collect the IDs
+ *   that have matching tool_result in the immediately following user message.
+ *   Strip tool_use blocks whose IDs have no result.
+ * Pass 2: Strip tool_result blocks whose tool_use_id has no matching tool_use
+ *   in the immediately preceding assistant message.
  */
 function validateToolPairs(messages: ApiMessage[]): ApiMessage[] {
-  // Pass 1: strip orphaned tool_use
+  // Pass 1: strip tool_use blocks with no matching result by ID
   const pass1: ApiMessage[] = [];
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (msg.role === 'assistant') {
-      const hasToolUse = msg.content.some(b => b.type === 'tool_use');
-      if (hasToolUse) {
+      const toolUses = msg.content.filter((b): b is ToolUseContent => b.type === 'tool_use');
+      if (toolUses.length > 0) {
         const next = messages[i + 1];
-        const hasResults = next?.role === 'user' && next.content.some(b => b.type === 'tool_result');
-        if (!hasResults) {
-          const kept = msg.content.filter(b => b.type !== 'tool_use');
-          if (kept.length > 0) pass1.push({ ...msg, content: kept });
-          continue;
+        const resultIds = new Set(
+          next?.role === 'user'
+            ? next.content
+                .filter((b): b is ToolResultContent => b.type === 'tool_result')
+                .map(b => b.tool_use_id)
+            : []
+        );
+        // Keep only tool_use blocks that have a matching result
+        const pairedContent = msg.content.filter(b => {
+          if (b.type !== 'tool_use') return true;
+          return resultIds.has((b as ToolUseContent).id);
+        });
+        // Keep the message if any content remains; drop if all tool_uses were orphaned
+        // and no text/thinking blocks existed
+        if (pairedContent.length > 0) {
+          pass1.push({ ...msg, content: pairedContent });
         }
+        continue;
       }
     }
     pass1.push(msg);
   }
 
-  // Pass 2: strip orphaned tool_result
+  // Pass 2: strip tool_result blocks with no matching tool_use by ID
   const pass2: ApiMessage[] = [];
   for (let i = 0; i < pass1.length; i++) {
     const msg = pass1[i];
     if (msg.role === 'user' && msg.content.some(b => b.type === 'tool_result')) {
       const prev = pass2[pass2.length - 1];
-      const hasPrevToolUse = prev?.role === 'assistant' && prev.content.some(b => b.type === 'tool_use');
-      if (!hasPrevToolUse) {
-        const kept = msg.content.filter(b => b.type !== 'tool_result');
-        if (kept.length > 0) pass2.push({ ...msg, content: kept });
-        continue;
+      const pairedIds = new Set(
+        prev?.role === 'assistant'
+          ? prev.content
+              .filter((b): b is ToolUseContent => b.type === 'tool_use')
+              .map(b => b.id)
+          : []
+      );
+      const pairedContent = msg.content.filter(b => {
+        if (b.type !== 'tool_result') return true;
+        return pairedIds.has((b as ToolResultContent).tool_use_id);
+      });
+      if (pairedContent.length > 0) {
+        pass2.push({ ...msg, content: pairedContent });
       }
+      continue;
     }
     pass2.push(msg);
   }
