@@ -12,6 +12,15 @@
 import type { ApiMessage, MessageContent, TextContent, ToolUseContent, ToolResultContent, Provider, ChatConfig } from './types.js';
 import type { ChannelData } from './channel.js';
 
+export interface CompactionCluster {
+  topic: string;
+  summary: string;
+  timestamp: number;
+}
+
+// Token estimation: ~4 chars per token (rough heuristic for mixed content)
+export const CHARS_PER_TOKEN = 4;
+
 const COMPACTION_SYSTEM_PROMPT = `You are a conversation compactor. Produce a dense, accurate summary of the conversation history provided.
 
 Preserve:
@@ -34,6 +43,183 @@ export interface CompactionResult {
   compactedCount: number;
   preservedCount: number;
   estimatedTokensSaved: number;
+}
+
+/**
+ * Merge new clusters into existing clusters by topic.
+ * Same topic -> append summary text. New topic -> add as new entry.
+ */
+export function mergeClusters(
+  existing: CompactionCluster[],
+  incoming: CompactionCluster[],
+): CompactionCluster[] {
+  const byTopic = new Map<string, CompactionCluster>();
+  for (const c of existing) {
+    byTopic.set(c.topic, { ...c });
+  }
+  for (const c of incoming) {
+    const prev = byTopic.get(c.topic);
+    if (prev) {
+      prev.summary = prev.summary + '\n\n' + c.summary;
+      prev.timestamp = Math.max(prev.timestamp, c.timestamp);
+    } else {
+      byTopic.set(c.topic, { ...c });
+    }
+  }
+  return Array.from(byTopic.values());
+}
+
+/**
+ * Estimate total character count for a set of messages.
+ */
+export function estimateMessageChars(messages: ApiMessage[]): number {
+  let total = 0;
+  for (const msg of messages) {
+    for (const block of msg.content) {
+      if ('text' in block && typeof (block as any).text === 'string') {
+        total += (block as any).text.length;
+      } else if ('content' in block && typeof (block as any).content === 'string') {
+        total += (block as any).content.length;
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * Count backward from end of messages to find the index that preserves
+ * at least `keepTurns` complete user turns. A turn = user text message
+ * + all subsequent assistant/tool messages until the next user text.
+ *
+ * Returns the number of messages to keep (from the end).
+ */
+export function countMessagesToKeep(messages: ApiMessage[], keepTurns: number): number {
+  let turnsFound = 0;
+  let keepCount = 0;
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    // A turn starts at a user message with text content (not just tool_result)
+    if (msg.role === 'user' && msg.content.some(b => b.type === 'text')) {
+      turnsFound++;
+      if (turnsFound > keepTurns) break;
+    }
+    keepCount++;
+  }
+
+  return keepCount;
+}
+
+/**
+ * Consolidate compaction clusters when they exceed count or size limits.
+ *
+ * Triggers on EITHER:
+ * - Cluster count > threshold (too many topics)
+ * - Any individual cluster summary > MAX_CLUSTER_SUMMARY_CHARS (bloated topic)
+ */
+const DEFAULT_CONSOLIDATE_THRESHOLD = 10;
+/** Per-cluster summary size cap. Bloated clusters trigger consolidation even below count threshold. */
+const MAX_CLUSTER_SUMMARY_CHARS = 8000;
+
+export async function consolidateClusters(
+  channel: ChannelData,
+  provider: Provider,
+  model: string,
+  threshold: number = DEFAULT_CONSOLIDATE_THRESHOLD,
+): Promise<void> {
+  const clusters = channel.compactionClusters || [];
+  const overCount = clusters.length > threshold;
+  const needsPhase1 = clusters.filter(c =>
+    c.summary.length > MAX_CLUSTER_SUMMARY_CHARS || c.summary.includes('\n\n'),
+  );
+  if (!overCount && needsPhase1.length === 0) return;
+
+  // Phase 1: Re-summarize bloated clusters and clusters with merge markers
+  if (needsPhase1.length > 0) {
+    const config: ChatConfig = {
+      systemPrompt: 'You are a text consolidator. For each topic, merge the accumulated summary text into a single dense summary. Return ONLY a JSON array of {topic, summary} objects — no markdown fences.',
+      maxTokens: 4096,
+      temperature: 0.3,
+    };
+
+    const toConsolidate = needsPhase1.map(c => ({ topic: c.topic, summary: c.summary }));
+    const response = await provider.chat(
+      [{
+        role: 'user',
+        content: [{ type: 'text', text: `Consolidate these topic summaries:\n${JSON.stringify(toConsolidate, null, 2)}` } as TextContent],
+      }],
+      model,
+      [],
+      config,
+    );
+
+    const responseText = response.content
+      .filter((b): b is TextContent => b.type === 'text')
+      .map(b => b.text)
+      .join('\n');
+
+    const now = Date.now();
+    let consolidated: CompactionCluster[];
+    try {
+      const stripped = responseText.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
+      const parsed = JSON.parse(stripped);
+      consolidated = (Array.isArray(parsed) ? parsed : [])
+        .filter((c: any) => c.topic && c.summary)
+        .map((c: any) => ({
+          topic: String(c.topic).toLowerCase().replace(/\s+/g, '-'),
+          summary: String(c.summary),
+          timestamp: now,
+        }));
+    } catch {
+      consolidated = [{ topic: 'general', summary: responseText.trim(), timestamp: now }];
+    }
+    const kept = clusters.filter(c => !needsPhase1.some(t => t.topic === c.topic));
+    channel.compactionClusters = [...kept, ...consolidated];
+  }
+
+  // Phase 2: Cross-topic merge if still over threshold
+  if ((channel.compactionClusters || []).length <= threshold) return;
+
+  const config: ChatConfig = {
+    systemPrompt: `You are a conversation compactor. You have too many topic clusters (${channel.compactionClusters!.length}, limit: ${threshold}). Merge related topics into fewer clusters. Return ONLY a JSON array of {topic, summary} objects — no markdown fences. Combine related topics under a broader name (e.g., "auth-login" + "auth-middleware" → "auth-system"). Target: ${threshold} clusters or fewer.`,
+    maxTokens: 4096,
+    temperature: 0.3,
+  };
+
+  const allClusters = (channel.compactionClusters || []).map(c => ({ topic: c.topic, summary: c.summary }));
+  const response = await provider.chat(
+    [{
+      role: 'user',
+      content: [{ type: 'text', text: `Merge these ${allClusters.length} clusters down to ${threshold} or fewer:\n${JSON.stringify(allClusters, null, 2)}` } as TextContent],
+    }],
+    model,
+    [],
+    config,
+  );
+
+  const responseText = response.content
+    .filter((b): b is TextContent => b.type === 'text')
+    .map(b => b.text)
+    .join('\n');
+
+  const now2 = Date.now();
+  let merged: CompactionCluster[];
+  try {
+    const stripped = responseText.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
+    const parsed = JSON.parse(stripped);
+    merged = (Array.isArray(parsed) ? parsed : [])
+      .filter((c: any) => c.topic && c.summary)
+      .map((c: any) => ({
+        topic: String(c.topic).toLowerCase().replace(/\s+/g, '-'),
+        summary: String(c.summary),
+        timestamp: now2,
+      }));
+  } catch {
+    merged = [];
+  }
+  if (merged.length > 0 && merged.length < (channel.compactionClusters || []).length) {
+    channel.compactionClusters = merged;
+  }
 }
 
 /**
@@ -176,11 +362,23 @@ export function getActiveMessages(channel: ChannelData): ApiMessage[] {
 const MAX_SUMMARIES = 5;
 
 /**
- * Build an effective system prompt with compaction summaries injected.
+ * Build an effective system prompt with compaction summaries or clusters injected.
+ * Prefers clusters (new format) when present. Falls back to legacy summaries array.
  * If summaries exceed MAX_SUMMARIES, they are consolidated inline to prevent
  * unbounded system prompt growth.
  */
 export function buildEffectiveSystemPrompt(basePrompt: string, channel: ChannelData): string {
+  // Prefer cluster-based format if available
+  const clusters = channel.compactionClusters || [];
+  if (clusters.length > 0) {
+    const sorted = [...clusters].sort((a, b) => a.topic.localeCompare(b.topic));
+    const clusterBlock = sorted
+      .map(c => `--- ${c.topic} ---\n${c.summary}`)
+      .join('\n\n');
+    return `${basePrompt}\n\n## Previous Conversation Context (by topic)\n\n${clusterBlock}`;
+  }
+
+  // Legacy: flat summaries array
   const summaries = channel.compactionSummaries || [];
   if (summaries.length === 0) return basePrompt;
 
@@ -208,6 +406,7 @@ export function getCompactionStats(channel: ChannelData): {
   activeMessages: number;
   dormantMessages: number;
   compactionCount: number;
+  topicCount: number;
   estimatedActiveTokens: number;
 } {
   const dormantBefore = channel.dormantBefore || 0;
@@ -229,7 +428,8 @@ export function getCompactionStats(channel: ChannelData): {
     activeMessages: active.length,
     dormantMessages: dormant.length,
     compactionCount: (channel.compactionSummaries || []).length,
-    estimatedActiveTokens: Math.floor(totalChars / 4),
+    topicCount: (channel.compactionClusters || []).length,
+    estimatedActiveTokens: Math.floor(totalChars / CHARS_PER_TOKEN),
   };
 }
 
@@ -248,15 +448,45 @@ function formatMessageForSummary(msg: ApiMessage): string {
       }
       case 'tool_use': {
         const tu = block as ToolUseContent;
-        const inputPreview = JSON.stringify(tu.input).substring(0, 200);
+        const inp = tu.input as Record<string, unknown>;
+        let inputPreview: string;
+        // Tool-aware formatting — surface the most meaningful fields for summarization
+        switch (tu.name) {
+          case 'read_file':
+            inputPreview = `file_path: "${inp.file_path}"`;
+            break;
+          case 'code_search':
+            inputPreview = `"${inp.patterns}" in ${inp.paths || '.'}`;
+            break;
+          case 'propose_edit':
+            inputPreview = `file: "${inp.file_path}" | ${String(inp.rationale || '').substring(0, 120)}`;
+            break;
+          case 'propose_write':
+            inputPreview = `file: "${inp.file_path}" | ${String(inp.rationale || '').substring(0, 120)}`;
+            break;
+          case 'propose_patch':
+            inputPreview = `${String(inp.rationale || '').substring(0, 150)}`;
+            break;
+          case 'propose_exec':
+            inputPreview = `$ ${String(inp.command || '').substring(0, 120)}`;
+            break;
+          case 'lisp_eval':
+            inputPreview = String(inp.expression || '').substring(0, 120);
+            break;
+          case 'run_subagent':
+            inputPreview = `type: ${inp.agent_type} | ${String(inp.prompt || '').split('\n')[0].substring(0, 100)}`;
+            break;
+          default:
+            inputPreview = JSON.stringify(tu.input).substring(0, 200);
+        }
         parts.push(`[Tool: ${tu.name}(${inputPreview})]`);
         break;
       }
       case 'tool_result': {
         const tr = block as ToolResultContent;
         const preview = typeof tr.content === 'string'
-          ? tr.content.substring(0, 300)
-          : JSON.stringify(tr.content).substring(0, 300);
+          ? tr.content.substring(0, 400)
+          : JSON.stringify(tr.content).substring(0, 400);
         parts.push(`[Result: ${preview}]`);
         break;
       }
