@@ -15,6 +15,7 @@ export const RE_READABLE_TOOLS: Set<string> = new Set([
   'list_directory',
   'directory_tree',
   'find_files',
+  'lisp_eval',
 ]);
 
 export function buildBuiltinTools(projectRoot: string, cliRoot?: string): ToolDef[] {
@@ -53,7 +54,10 @@ function readFileTool(projectRoot: string): ToolDef {
       const stat = await fs.stat(resolved);
       if (!stat.isFile()) throw new Error(`Not a file: ${resolved}`);
 
-      if (stat.size > FILE_READ_LIMIT) {
+      const hasRange = typeof args.offset === 'number' || typeof args.limit === 'number';
+
+      if (stat.size > FILE_READ_LIMIT && !hasRange) {
+        // Large file with no offset/limit: read first chunk only
         const fd = await fs.open(resolved, 'r');
         try {
           const buf = Buffer.alloc(FILE_READ_LIMIT);
