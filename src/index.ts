@@ -161,6 +161,7 @@ Environment:
   ZHIPU_API_KEY          z.ai API key
   ZAI_BASE_URL           z.ai base URL
   OLLAMA_BASE_URL        Ollama server URL (default: http://localhost:11434)
+  LMSTUDIO_BASE_URL      LM Studio server URL (default: http://localhost:1234/v1)
   CODING_CLI_DATA_DIR    Data directory (default: ~/.coding-cli)
 `.trim());
     return;
