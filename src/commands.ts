@@ -4,6 +4,7 @@ import type { Provider, ApiMessage, TextContent } from './types.js';
 import type { ModelPreset } from './presets.js';
 import type { ChannelData } from './channel.js';
 import type { SubagentManager } from './subagent.js';
+import type { LispRuntime } from './lisp/core.js';
 import { getAvailablePresets, getPresetsForProvider, findPreset } from './presets.js';
 import { AGENT_MODES, findMode as findAgentMode, type AgentMode } from './modes.js';
 import { listChannels, relativeTime, loadChannel as loadChannelData, loadChannelByName } from './channel.js';
@@ -81,6 +82,8 @@ export interface CommandContext {
   showSidebar?: () => Promise<void>;
   /** coding-cli's own source root for self-modification */
   cliRoot: string;
+  /** Lisp agent runtime (if initialized) */
+  lispRuntime?: LispRuntime;
   quit: () => void;
 }
 
@@ -114,7 +117,7 @@ const commands: Record<string, CommandHandler> = {
       '  /edit system             Edit system prompt in $EDITOR',
       '  /paste                   Multi-line input mode (end with /end)',
       '  /fast                    Toggle fast-approve mode (Enter to approve all)',
-      '  /auto                    Toggle auto-approve mode (full bypass, model loops until done)',
+      '  /auto, /a                Toggle auto-approve mode (full bypass, model loops until done)',
       '  /approve [all|sel]       Approve all (all/empty) or one item by selector',
       '  /reject [all|sel]        Reject all (all/empty) or one item by selector',
       '  /files                   List pending staged writes',
@@ -125,9 +128,13 @@ const commands: Record<string, CommandHandler> = {
       '  /git commit [message]    Stage all + commit (auto-generates message from diff)',
       '  /git branch <name> [src] Create branch (from src or current)',
       '  /git pr <base> [title]   Create PR to base branch (auto-generates title/body)',
+      '  /lisp <expr>             Evaluate a Lisp expression in the agent runtime',
+      '  /lisp strategies         List all user-defined Lisp strategies',
+      '  /lisp source <name>      Show source of a strategy',
+      '  /lisp load <file>        Load a .lisp file into the runtime',
       '  /rebuild                 Rebuild coding-cli after self-modification',
       '  /sidebar                 Open channel sidebar (same as Ctrl+B)',
-      '  /quit                    Save and exit',
+      '  /quit, /exit             Save and exit',
     ];
 
     const custom = await loadCustomCommands(ctx.projectRoot);
@@ -709,6 +716,8 @@ const commands: Record<string, CommandHandler> = {
     return `${DIM}Auto-approve mode OFF — staged items require manual /approve.${RESET}`;
   },
 
+  a: async (args, ctx) => commands.auto(args, ctx),
+
   identity: async (args, ctx) => {
     const identity: IdentityData = ctx.channel.identity || (ctx.channel.identity = {});
     const parts = args.trim().split(/\s+/);
@@ -936,6 +945,55 @@ const commands: Record<string, CommandHandler> = {
     }
   },
 
+  lisp: async (args, ctx) => {
+    if (!ctx.lispRuntime) {
+      return 'Lisp runtime not initialized.';
+    }
+    const rt = ctx.lispRuntime;
+    const trimmed = args.trim();
+
+    if (!trimmed) {
+      const defs = rt.userDefinitions();
+      return `Lisp runtime active. ${defs.length} user definitions.\nUse: /lisp <expr>, /lisp strategies, /lisp source <name>, /lisp load <file>`;
+    }
+
+    // Subcommands
+    if (trimmed === 'strategies') {
+      const defs = rt.userDefinitions();
+      if (defs.length === 0) return 'No user-defined strategies.';
+      return defs.map((d: string) => `  ${d}`).join('\n');
+    }
+
+    if (trimmed.startsWith('source ')) {
+      const name = trimmed.slice(7).trim();
+      const val = rt.get(name);
+      if (!val) return `Not found: ${name}`;
+      return rt.prettyPrint(val);
+    }
+
+    if (trimmed.startsWith('load ')) {
+      const filePath = trimmed.slice(5).trim();
+      try {
+        const { readFile: readFileFn } = await import('node:fs/promises');
+        const { resolve, isAbsolute } = await import('node:path');
+        const resolved = isAbsolute(filePath) ? filePath : resolve(ctx.projectRoot, filePath);
+        const source = await readFileFn(resolved, 'utf-8');
+        await rt.load(source);
+        return `Loaded ${resolved}`;
+      } catch (e) {
+        return `Error loading: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+
+    // Evaluate as Lisp expression
+    try {
+      const result = await rt.eval(trimmed);
+      return rt.print(result);
+    } catch (e) {
+      return `Error: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  },
+
   rebuild: async (_args, ctx) => {
     const result = rebuildSelf(ctx.cliRoot);
     if (result.success) {
@@ -945,6 +1003,10 @@ const commands: Record<string, CommandHandler> = {
   },
 
   quit: async (_args, ctx) => {
+    ctx.quit();
+  },
+
+  exit: async (_args, ctx) => {
     ctx.quit();
   },
 };
