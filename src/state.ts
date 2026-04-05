@@ -112,14 +112,20 @@ export function collectStateText(ctx: StateContext): string {
   }
 
   // Compaction info
+  const topicCount = (ctx.channel.compactionClusters || []).length;
   const summaryCount = (ctx.channel.compactionSummaries || []).length;
-  if (summaryCount > 0) {
-    parts.push([
+  if (topicCount > 0 || summaryCount > 0 || dormantBefore > 0) {
+    const lines = [
       '---[ STATE: compaction ]---',
-      `Summaries: ${summaryCount}`,
-      `Active messages: ${activeCount}, Dormant: ${dormantBefore}`,
-      'Compaction summaries are included in the system prompt automatically.',
-    ].join('\n'));
+      `Compaction: ${topicCount} topics, ${dormantBefore} dormant messages`,
+      `Active messages: ${activeCount}`,
+    ];
+    if (ctx.channel.trimConfig) {
+      const tc = ctx.channel.trimConfig;
+      lines.push(`Trim config: threshold=${tc.safetyThreshold}, protect=${tc.protectRecent}, min=${tc.minTrimSize}`);
+    }
+    lines.push('Topic clusters are included in the system prompt automatically.');
+    parts.push(lines.join('\n'));
   }
 
   // Context window
