@@ -16,6 +16,13 @@ import type { ApiMessage } from './types.js';
 import type { TrackedFile } from './fileTracking.js';
 import type { ContextUsage } from './context.js';
 import type { IdentityData } from './identity.js';
+import type { CompactionCluster } from './compaction.js';
+
+export interface TrimConfig {
+  safetyThreshold: number;
+  protectRecent: number;
+  minTrimSize: number;
+}
 
 const DATA_DIR = process.env.CODING_CLI_DATA_DIR || path.join(os.homedir(), '.coding-cli');
 const CHANNELS_DIR = path.join(DATA_DIR, 'channels');
@@ -31,6 +38,8 @@ export interface ChannelData {
   lastActivity: number;
   /** Summaries from prior compactions, injected into system prompt */
   compactionSummaries: string[];
+  /** Topic-clustered compaction summaries (replaces flat compactionSummaries) */
+  compactionClusters: CompactionCluster[];
   /** Index: messages before this index are dormant (excluded from API calls) */
   dormantBefore: number;
   /** Tracked files with content hashes */
@@ -39,6 +48,12 @@ export interface ChannelData {
   contextUsage: ContextUsage;
   /** Agent self-identity data */
   identity: IdentityData;
+  /** Custom test command override (e.g. "pytest -x", "npm run test:unit") */
+  testCommand?: string;
+  /** Serialized Lisp agent state (user-defined strategies and data) */
+  lispState?: string;
+  /** Agent-controllable autoTrim thresholds (absent = defaults) */
+  trimConfig?: TrimConfig;
 }
 
 export interface ChannelSummary {
@@ -118,6 +133,7 @@ export function createChannel(name: string, presetId: string, systemPrompt: stri
     created: Date.now(),
     lastActivity: Date.now(),
     compactionSummaries: [],
+    compactionClusters: [],
     dormantBefore: 0,
     trackedFiles: {},
     contextUsage: { turnHistory: [], lifetimeInputTokens: 0, lifetimeOutputTokens: 0, lifetimeApiCalls: 0 },
@@ -138,12 +154,17 @@ export function branchChannel(name: string, from: ChannelData, presetId: string)
     created: Date.now(),
     lastActivity: Date.now(),
     compactionSummaries: [...(from.compactionSummaries || [])],
+    compactionClusters: [...(from.compactionClusters || [])],
     dormantBefore: from.dormantBefore || 0,
     trackedFiles: { ...(from.trackedFiles || {}) },
     contextUsage: from.contextUsage
       ? JSON.parse(JSON.stringify(from.contextUsage))
       : { turnHistory: [], lifetimeInputTokens: 0, lifetimeOutputTokens: 0, lifetimeApiCalls: 0 },
     identity: from.identity ? JSON.parse(JSON.stringify(from.identity)) : {},
+    // Carry forward Lisp state so branched channels inherit evolved strategies
+    lispState: from.lispState,
+    testCommand: from.testCommand,
+    trimConfig: from.trimConfig ? { ...from.trimConfig } : undefined,
   };
 }
 
@@ -168,7 +189,30 @@ export async function loadChannel(id: string): Promise<ChannelData | null> {
   const filepath = path.join(CHANNELS_DIR, `${id}.json`);
   try {
     const raw = await fs.readFile(filepath, 'utf-8');
-    return JSON.parse(raw) as ChannelData;
+    const channel = JSON.parse(raw) as ChannelData;
+
+    // Guard: repair corrupted dormantBefore (can happen if compaction ran
+    // but syncChannelFromEngine overwrote channel.messages with active-only slice)
+    if (channel.dormantBefore && channel.dormantBefore > channel.messages.length) {
+      channel.dormantBefore = 0;
+    }
+
+    // Migrate legacy compactionSummaries -> compactionClusters
+    if (!channel.compactionClusters) {
+      channel.compactionClusters = [];
+      if (channel.compactionSummaries && channel.compactionSummaries.length > 0) {
+        for (let i = 0; i < channel.compactionSummaries.length; i++) {
+          channel.compactionClusters.push({
+            topic: `legacy-context-${i + 1}`,
+            summary: channel.compactionSummaries[i],
+            timestamp: channel.lastActivity || Date.now(),
+          });
+        }
+        channel.compactionSummaries = [];
+      }
+    }
+
+    return channel;
   } catch {
     return null;
   }
