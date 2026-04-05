@@ -6,6 +6,8 @@ import { createOAuthFetch } from './oauthFetch.js';
 import { createZaiFetch } from './zaiFetch.js';
 import { createOllamaFetch } from './ollamaFetch.js';
 import { discoverOllamaModels } from './ollamaDiscovery.js';
+import { createLmStudioFetch } from './lmStudioFetch.js';
+import { discoverLmStudioModels } from './lmStudioDiscovery.js';
 import { registerPresets } from './presets.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -99,6 +101,20 @@ export async function detectAuth(): Promise<DetectedProviders | null> {
       providers.set('ollama', {
         provider: new AnthropicProvider({ fetch: ollamaFetch }),
         label: `Ollama (${ollamaBase}) — ${ollamaModels.length} model${ollamaModels.length === 1 ? '' : 's'}`,
+      });
+    }
+  }
+
+  // LM Studio (local — OpenAI-compatible, no API key needed)
+  if (process.env.LMSTUDIO_BASE_URL) {
+    const lmStudioBase = process.env.LMSTUDIO_BASE_URL;
+    const lmStudioModels = await discoverLmStudioModels(lmStudioBase);
+    if (lmStudioModels.length > 0) {
+      registerPresets(lmStudioModels);
+      const lmStudioFetch = createLmStudioFetch(lmStudioBase);
+      providers.set('lm-studio', {
+        provider: new AnthropicProvider({ fetch: lmStudioFetch }),
+        label: `LM Studio (${lmStudioBase}) — ${lmStudioModels.length} model${lmStudioModels.length === 1 ? '' : 's'}`,
       });
     }
   }
