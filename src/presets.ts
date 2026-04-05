@@ -36,6 +36,18 @@ export const PRESETS: ModelPreset[] = [
     contextWindow: 1_000_000,
     needsIdentity: true,
   },
+  // --- LM Studio ---
+  {
+    id: 'lmstudio-default',
+    providerId: 'lm-studio',
+    modelId: 'local-model',
+    displayName: 'LM Studio (local)',
+    maxTokens: 4096,
+    temperature: 0.7,
+    thinkingBudget: 0,
+    contextWindow: 8192,
+    needsIdentity: false,
+  },
   // --- z.ai ---
   {
     id: 'glm-5',
