@@ -1,39 +1,27 @@
 # coding-cli
 
-Interactive CLI for multi-turn LLM conversations with tool use, staged writes, and a lisp runtime.
+Terminal-native coding assistant. Multi-turn LLM conversations with tool use, staged writes, and an embedded Lisp runtime.
 
-Think of it as a terminal-native coding assistant: you chat with an LLM, it reads your codebase,
-proposes changes, and nothing touches disk until you approve.
+You chat. The model reads your codebase, proposes changes, runs commands. Nothing touches disk until you approve.
 
-## Features
+```
+[46%] > refactor auth.ts to use the new provider interface
+```
 
-- **Interactive REPL** — Multi-turn conversations in your terminal with full readline editing
-- **Multi-provider** — Anthropic (API key or OAuth), z.ai, Ollama (auto-detected), LM Studio (auto-detected)
-- **Tool use** — The model reads files, searches code, browses directories, proposes edits, runs tests, and evaluates lisp
-- **Staged writes** — All file changes are proposed, reviewed, and explicitly approved before being applied
-- **Staged exec** — Shell commands can be proposed and approved the same way as file writes
-- **File tracking** — Tracks which files the model has read with content hashes for drift detection
-- **Channel persistence** — Conversations saved as JSON, resumable across sessions
-- **Compaction** — Summarize older messages to reclaim context window space while preserving decisions
-- **Auto-trim** — Automatic context trimming when approaching the window limit
-- **Dedupe** — Duplicate message detection to prevent context bloat
-- **Lisp runtime** — The agent has a persistent lisp interpreter with stdlib; strategies survive across sessions
-- **Subagents** — Spawn background subagents that run tasks concurrently and inject results on join
-- **Bootstrap** — Auto-orient the model: scans project structure and key files
-- **Context window tracking** — Live utilization bar, burn rate, estimated turns remaining, cache hit rate
-- **Editor integration** — Compose messages in `$EDITOR` via `/edit` or `Ctrl+X E`
-- **Markdown rendering** — Assistant output rendered with ANSI colors (headers, code blocks, bold, italic)
-- **Sounds** — Optional audio feedback (`CODING_CLI_SOUNDS=1`)
-- **Custom commands** — Define project-specific slash commands in `.coding-cli/commands.json`
+## Why
 
-## Quick Start
+Claude Code and Cursor are great but closed. coding-cli is the same shape — tool-using agent, staged edits, context management — built as transparent TypeScript you can read, fork, and modify. The agent can even modify its own source (`/rebuild` to recompile).
 
-### Prerequisites
+Distinctive features:
 
-- Node.js 18+
-- One of: Anthropic API key, Claude Pro/Max subscription (OAuth), z.ai API key, Ollama running locally, or LM Studio running locally
+- **Staged writes** — every file change is proposed, reviewed, approved. Same for shell commands.
+- **Embedded Lisp runtime** — the agent has a persistent Lisp interpreter with 100+ strategies. Strategies are S-expressions the agent inspects, rewrites, and evolves. State survives across sessions.
+- **Multi-provider** — Anthropic (API + OAuth), z.ai, Ollama, LM Studio. Auto-detected.
+- **Context-aware** — live utilization bar, burn rate, turns remaining, cache hit rate. Compaction, auto-trim, and dedupe keep long conversations viable.
+- **Subagents** — spawn background workers that run concurrently and inject results on join.
+- **Self-modification** — the CLI can read and edit its own TypeScript source.
 
-### Install
+## Install
 
 ```bash
 git clone https://github.com/your-org/coding-cli.git
@@ -42,350 +30,200 @@ npm install
 npm run build
 ```
 
-### Configure Authentication
+Requires Node.js 18+.
 
-**Option A: Anthropic API Key**
+## Auth
 
-```bash
-cp .env.example .env
-# Edit .env and set ANTHROPIC_API_KEY
-```
+Pick one:
 
-**Option B: Anthropic OAuth (Claude Pro/Max)**
+| Provider | Setup |
+|---|---|
+| Anthropic API | `cp .env.example .env` → set `ANTHROPIC_API_KEY` |
+| Anthropic OAuth (Pro/Max) | `node dist/index.js auth` (browser flow) |
+| z.ai | Set `ZHIPU_API_KEY` in `.env` |
+| Ollama | Start Ollama locally — auto-detected at `localhost:11434` |
+| LM Studio | Start LM Studio with local server — auto-detected at `localhost:1234/v1` |
 
-```bash
-node dist/index.js auth
-# Follow the prompts to authenticate via browser
-```
-
-**Option C: z.ai**
-
-```bash
-cp .env.example .env
-# Edit .env and set ZHIPU_API_KEY
-# Optionally set ZAI_BASE_URL if using a custom endpoint
-```
-
-**Option D: Ollama (local)**
-
-Ollama is auto-detected. Start the Ollama server and run coding-cli — available models are
-discovered automatically from `http://localhost:11434` (override with `OLLAMA_BASE_URL`).
-
-**Option E: LM Studio (local)**
-
-LM Studio is auto-detected. Start LM Studio with its local server enabled. coding-cli discovers
-the server at `http://localhost:1234/v1` (override with `LMSTUDIO_BASE_URL`).
-
-### Run
+## Run
 
 ```bash
 npm start
-# or
-node dist/index.js
+# or single-turn
+node dist/index.js -p "what does auth.ts do?"
+node dist/index.js -p "list providers" -f json -q
 ```
 
-## Usage
-
-### Interactive REPL
+## Essential Commands
 
 ```
-coding-cli v0.2.0
-
-Auth: API key
-Resuming: channel-2026-03-01 (12 messages)
-Project: /home/user/my-project
-
-[46%] > What files are in this project?
+/help                    List all commands
+/model [id]              Switch model (picker if no args)
+/mode [name]             Switch agent mode
+/bootstrap               Orient the model — scan project structure
+/compact [keep]          Summarize older messages (keep last N)
+/new <name>              New channel
+/load [id|name]          Switch channel
+/approve [all|n|token]   Approve staged writes/exec
+/reject [all|n|token]    Discard staged writes/exec
+/lisp <expr>             Evaluate in the agent's Lisp runtime
+/git commit [msg]        Stage all + auto-generate commit message
+/spawn <name> <task>     Background subagent
+/edit                    Compose message in $EDITOR
+/auto                    Full auto-approve loop (model runs until done)
+/quit                    Save and exit
 ```
 
-The prompt shows current context window utilization. The model uses tools autonomously to explore
-your codebase, then responds.
+Full command reference: run `/help` inside the REPL.
 
-### Non-Interactive (Single-Turn) Mode
+## Keybindings
 
-Pass `-p` to send a single prompt and exit:
-
-```bash
-# Plain text output
-node dist/index.js -p "What does auth.ts do?"
-
-# JSON output (full API response)
-node dist/index.js -p "List all providers" -f json
-
-# Quiet mode (suppress progress/tool output)
-node dist/index.js -p "Summarize this file" -q
-```
-
-## Slash Commands
-
-| Command | Description |
+| Key | Action |
 |---|---|
-| `/help` | Show all commands |
-| `/model [id]` | Select model (interactive picker if no args) |
-| `/mode [name]` | Switch agent mode (picker if no args) |
-| `/system <prompt>` | Set a custom system prompt |
-| `/new <name>` | Create a new empty channel |
-| `/branch <name>` | Create a new channel with current context |
-| `/load [id\|name]` | Switch to a channel (interactive picker if no args) |
-| `/channel` | Alias for `/load` |
-| `/list` | List all channels |
-| `/compact [keep]` | Compact older messages into summary (keep last N, default 20) |
-| `/read <channel>` | Read another channel — compact its history into current context |
-| `/info` | Show channel info, compaction stats, and context window usage |
-| `/bootstrap` | Orient the model — scans project structure and key files |
-| `/state` | Show ephemeral state (what the model sees) |
-| `/history [n]` | Show last n messages (default 10) |
-| `/spawn <name> <task>` | Spawn a background subagent |
-| `/agents` | List running/completed subagents |
-| `/join <name>` | Wait for subagent, inject result and staged writes |
-| `/kill <name>` | Abort a running subagent |
-| `/identity [sub]` | Agent self-identity (list/get/set/clear/reserved) |
-| `/edit` | Compose message in `$EDITOR` |
-| `/edit system` | Edit system prompt in `$EDITOR` |
-| `/paste` | Multi-line input mode (end with `/end`) |
-| `/fast` | Toggle fast-approve mode (Enter approves all) |
-| `/auto`, `/a` | Toggle auto-approve mode (full bypass, model loops until done) |
-| `/approve [all\|sel]` | Approve all or one staged item by selector |
-| `/reject [all\|sel]` | Reject all or one staged item by selector |
-| `/files` | List pending staged writes |
-| `/git status` | Show git status |
-| `/git log [n]` | Show last n commits (default 10) |
-| `/git diff` | Show working tree diff |
-| `/git commit [message]` | Stage all changes and commit (auto-generates message from diff) |
-| `/git branch <name> [src]` | Create branch (from src or current) |
-| `/git pr <base> [title]` | Create PR to base branch (auto-generates title/body) |
-| `/commit [message]` | Alias for `/git commit` |
-| `/lisp <expr>` | Evaluate a lisp expression in the agent runtime |
-| `/lisp strategies` | List all user-defined lisp strategies |
-| `/lisp source <name>` | Show source of a strategy |
-| `/lisp load <file>` | Load a .lisp file into the runtime |
-| `/rebuild` | Rebuild coding-cli after self-modification |
-| `/sidebar` | Open channel sidebar |
-| `/quit`, `/exit` | Save and exit |
-
-### Keybindings
-
-| Key | Description |
-|---|---|
-| `Ctrl+X E` | Open `$EDITOR` with current line text (like bash `edit-and-execute-command`) |
+| `Ctrl+X E` | Open `$EDITOR` with current line |
 | `Ctrl+X Tab` | Cycle agent mode |
 | `Ctrl+B` | Open channel sidebar |
-| `Ctrl+C` | Cancel current line / interrupt a running turn |
-| `Ctrl+C Ctrl+C` | Quit (within 1 second) |
-
-## Available Tools
-
-The model has access to these tools during conversation:
-
-| Tool | Description |
-|---|---|
-| `read_file` | Read file contents with line numbers. Supports `offset`/`limit` for large files. |
-| `code_search` | Literal text search across code files (uses `grep`). Filter by extension. |
-| `list_directory` | List directory contents (single level) with file sizes. |
-| `directory_tree` | Recursive tree view with optional extension filter. Capped at 200 entries. |
-| `find_files` | Find files by name glob or extension. Recursive. |
-| `propose_write` | Propose creating or fully replacing a file (staged — requires approval). |
-| `propose_edit` | Propose a targeted search-and-replace edit on an existing file (staged). |
-| `propose_patch` | Propose a unified-diff patch on an existing file (staged). |
-| `propose_exec` | Propose a shell command to execute (staged — requires approval). |
-| `reject_write` | Cancel a previously staged write by token. |
-| `run_typescript_validation` | Run `tsc --noEmit` and return compiler errors. |
-| `run_tests` | Run the project's test command and return output. |
-| `self_compact` | Compact the current conversation from within a tool call. |
-| `run_subagent` | Spawn a subagent to handle a delegated task. |
-| `self_identity` | Read or write the agent's identity fields. |
-| `lisp_eval` | Evaluate a lisp expression in the persistent agent runtime. |
-| `validate_self` | Validate coding-cli's own source (runs `tsc --noEmit` on the CLI itself). |
+| `Ctrl+C` | Cancel line / interrupt turn |
+| `Ctrl+C Ctrl+C` | Quit (within 1s) |
 
 ## Staged Writes
 
-When the model proposes a file change, it is staged — not applied immediately. You will see a
-summary with a token:
+When the model proposes a change, it's staged with a token:
 
 ```
 ── staged writes ──
-
   ✓ src/utils.ts [S&R] token: a1b2c3d4
     - const old = 'value';
     + const updated = 'new value';
 
-/approve to apply (or /approve all), /reject to discard
+/approve to apply · /reject to discard
 ```
 
-The `/approve` and `/reject` commands are flexible:
+Flexible selectors:
 
 ```
-> /approve              # Auto-applies if there is only 1 pending write
-                        # Shows numbered list if there are multiple
-
-> /approve all          # Apply all pending writes at once
-> /approve 1            # Apply by number (from the listed order)
-> /approve a1b2c3d4     # Apply by exact token
-> /approve a1b2         # Apply by token prefix (if unambiguous)
-
-> /reject all           # Discard all pending writes
-> /reject 2             # Discard by number
+/approve              # auto-applies if only 1 pending
+/approve all          # apply all
+/approve 2            # by number
+/approve a1b2         # by token prefix
+/reject all           # discard all
 ```
 
-The same syntax works for staged exec (`propose_exec` calls from the model).
+Same syntax works for staged exec.
 
-## Compaction, Auto-Trim, and Dedupe
+## Tools Available to the Model
 
-**Compaction** — As conversations grow, use `/compact` to summarize older messages:
+`read_file`, `code_search`, `list_directory`, `directory_tree`, `find_files`, `propose_write`, `propose_edit`, `propose_patch`, `propose_exec`, `reject_write`, `run_tests`, `validate_self`, `run_subagent`, `self_compact`, `self_identity`, `lisp_eval`, `dismiss_result`/`dismiss_results`.
 
-```
-> /compact 20           # Keep 20 recent messages, summarize the rest
-```
+## Context Management
 
-Compacted messages are marked dormant (excluded from API calls) and a dense summary is stored.
-Summaries are injected into the system prompt automatically so the model retains long-term context.
-
-Use `/new --carry` (or `/branch`) to start a fresh channel while carrying compaction summaries
-and the system prompt — useful for continuing work without the full message history.
-
-**Auto-Trim** — When the context window approaches its limit, older messages are automatically
-trimmed to make room, preserving recent context and compaction summaries.
-
-**Dedupe** — Duplicate or near-duplicate messages are detected and suppressed before being sent
-to the API, preventing redundant context consumption.
-
-## Lisp Runtime
-
-The agent has access to a lisp interpreter via the `lisp_eval` tool. A standard library is loaded
-at startup from `src/lisp/stdlib.lisp`. State persists to `~/.coding-cli/lisp/` between sessions,
-so strategies and definitions survive across conversations.
-
-Use `/lisp <expr>` to evaluate expressions directly from the REPL.
-
-See `src/lisp/AGENT_GUIDE.md` for the full guide to writing and using strategies.
-
-## Context Window Tracking
-
-After each turn, a context utilization bar is displayed:
+After each turn:
 
 ```
 ████████████░░░░░░░░ 58% · 116.2K/200K · ~8 turns left · cache 42%
 ```
 
-The tracker monitors:
-- **Utilization** — Current context window usage (green/yellow/red thresholds)
-- **Burn rate** — Average context growth per turn
-- **Turns remaining** — Estimated turns before hitting the window limit
-- **Cache efficiency** — Percentage of input tokens served from the prompt cache
+- **Compaction** — `/compact 20` summarizes older messages; summaries inject into the system prompt
+- **Auto-Trim** — fires automatically when approaching window limit
+- **Dedupe** — duplicate messages suppressed before API call
+- **Branch** — `/branch` or `/new --carry` starts fresh while keeping summaries
 
-The REPL prompt also shows a compact utilization percentage: `[58%] >`
+Use `/info` for stats, `/state` to see what the model actually receives.
 
-Use `/info` to see detailed context statistics, or `/state` to see the full ephemeral state
-the model receives on each turn.
+## Lisp Runtime
+
+The agent has a persistent Lisp interpreter exposed via `lisp_eval`. Strategies are S-expressions — the agent inspects them as data, composes them into pipelines, and evolves them during self-improvement loops.
+
+```lisp
+(define (review-and-fix path)
+  (pipeline path review-file heal))
+
+(improve-strategy "safe-edit" "add nil guards and try/catch")
+```
+
+State persists to `~/.coding-cli/lisp/state.json`. See `src/lisp/AGENT_GUIDE.md` for the full strategy guide.
+
+Evaluate from the REPL:
+
+```
+/lisp (self-test)
+/lisp strategies
+/lisp source safe-edit
+```
 
 ## Architecture
 
 ```
 src/
-├── index.ts              Entry point, auth detection, provider init, boot
-├── repl.ts               Interactive readline loop, keybindings, tool registration
+├── index.ts              Entry point, auth detection, boot
+├── repl.ts               Interactive readline loop, keybindings
 ├── engine.ts             Multi-turn conversation engine with tool loop
 ├── commands.ts           Slash command handlers
-├── channel.ts            Channel creation, persistence (JSON files)
-├── state.ts              Ephemeral state injection (datetime, files, writes, context)
-├── types.ts              Core type definitions (messages, channels, tools, providers)
-├── presets.ts            Model presets per provider
-├── modes.ts              Agent mode definitions
-├── provider.ts           Provider abstraction and dispatch
-├── auth.ts               Auth detection, provider construction
-├── identity.ts           Agent self-identity storage and retrieval
+├── channel.ts            Channel creation, persistence
+├── state.ts              Ephemeral state injection
+├── provider.ts           Provider abstraction (Anthropic/z.ai/Ollama/LM Studio)
+├── auth.ts               Auth detection and OAuth login
+├── compaction.ts         Message summarization and dormancy
+├── context.ts            Context window tracking, burn rate
 ├── autoTrim.ts           Automatic context trimming
 ├── dedupe.ts             Duplicate message detection
-├── compaction.ts         Message summarization and dormancy
-├── context.ts            Context window tracking and burn rate estimation
-├── bootstrap.ts          Project orientation scan
-├── prompts.ts            System prompt construction
 ├── subagent.ts           Background subagent management
-├── selfAware.ts          Self-modification support (rebuild)
-├── lispSetup.ts          lisp_eval tool construction
-├── editor.ts             $EDITOR integration (temp file, sync spawn)
-├── picker.ts             Interactive numbered-list picker
-├── oauthFetch.ts         Custom fetch wrapper for Anthropic OAuth
-├── zaiFetch.ts           Fetch wrapper for z.ai API
-├── ollamaFetch.ts        Fetch wrapper for Ollama API
-├── ollamaDiscovery.ts    Ollama model discovery
-├── lmStudioFetch.ts      Fetch wrapper for LM Studio API
-├── lmStudioDiscovery.ts  LM Studio model and server discovery
+├── selfAware.ts          Self-modification support
 ├── lisp/
 │   ├── core.ts           Lisp runtime (eval, env, persistence)
 │   ├── builtins.ts       Built-in functions
 │   ├── stdlib.lisp       Standard library loaded at startup
-│   ├── AGENT_GUIDE.md    Guide for writing and using strategies
-│   └── ...               Reader, printer, types, bridge, env
+│   └── AGENT_GUIDE.md    Strategy-writing guide
 ├── tools/
-│   ├── builtins.ts       File and search tool implementations
-│   ├── staged.ts         Staged write tools (propose_write, propose_edit, propose_patch)
-│   ├── stagedExec.ts     Staged exec tool (propose_exec)
-│   ├── registry.ts       Tool registration, lookup, and dispatch
-│   ├── runner.ts         Safe child_process.spawn with timeouts
-│   ├── testRunner.ts     run_tests tool
-│   ├── selfCompactTool.ts self_compact tool
-│   ├── subagentTool.ts   run_subagent tool
-│   ├── identityTool.ts   self_identity tool
-│   └── dismissTool.ts    Tool dismissal support
+│   ├── builtins.ts       File/search tools
+│   ├── staged.ts         propose_write, propose_edit, propose_patch
+│   ├── stagedExec.ts     propose_exec
+│   ├── registry.ts       Tool registration and dispatch
+│   └── ...
 └── ui/
-    ├── index.ts          UI exports
-    └── layout.ts         Terminal layout and rendering helpers
+    └── layout.ts         Terminal rendering helpers
 ```
 
-### Key Design Decisions
+### Design Decisions
 
-- **No Python dependency.** Tools use Node.js built-ins and `grep` instead of Python scripts.
-- **Investigate-then-propose workflow.** The model must `read_file` before `propose_edit` — the search string must match exactly.
-- **Tool loop with cap.** The engine auto-executes tool calls up to 25 steps per turn, then yields to the user.
-- **Orphan cleanup.** If a session is interrupted mid-tool-call, orphaned `tool_use` blocks are stripped from history to prevent API errors.
-- **Content-hash tracking.** Every file read is tracked with a SHA-256 hash, enabling drift detection for staged writes.
-- **Compaction over truncation.** Old messages are summarized by the model and injected into the system prompt — preserving long-term context while freeing token budget.
-- **Context-aware prompting.** The REPL prompt and post-turn display show real-time context utilization.
+- **No Python.** Tools use Node built-ins and `grep`.
+- **Investigate-then-propose.** The model must `read_file` before `propose_edit` — SEARCH content must match exactly.
+- **Tool loop with cap.** 25 steps per turn, then yields to user.
+- **Orphan cleanup.** Interrupted tool_use blocks are stripped from history.
+- **Content-hash tracking.** Every read stores a SHA-256 hash for drift detection.
+- **Compaction over truncation.** Old messages are summarized, not deleted.
 
 ## Data Storage
 
-All persistent data is stored in `~/.coding-cli/` (configurable via `CODING_CLI_DATA_DIR`):
-
 ```
-~/.coding-cli/
+~/.coding-cli/                   (override: CODING_CLI_DATA_DIR)
 ├── auth/
-│   └── anthropic_oauth.json    OAuth tokens (mode 0600)
+│   └── anthropic_oauth.json     (mode 0600)
 ├── channels/
-│   ├── <uuid>.json             Channel data (messages, tracked files, pending writes, context)
-│   └── ...
+│   └── <uuid>.json              messages, tracked files, staged writes
 └── lisp/
-    └── state.json              Lisp runtime state (definitions, strategies)
+    └── state.json               persisted strategies and definitions
 ```
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Anthropic API key (alternative to OAuth) | — |
+| `ANTHROPIC_API_KEY` | Anthropic API key | — |
 | `ANTHROPIC_BASE_URL` | Anthropic API base URL | `https://api.anthropic.com` |
 | `ZHIPU_API_KEY` | z.ai API key | — |
 | `ZAI_BASE_URL` | z.ai API base URL | `https://api.z.ai/api/coding/paas/v4` |
-| `OLLAMA_BASE_URL` | Ollama server base URL | `http://localhost:11434` |
-| `OLLAMA_DEBUG` | Enable Ollama discovery debug logging | — |
-| `LMSTUDIO_BASE_URL` | LM Studio server base URL | `http://localhost:1234/v1` |
-| `LM_STUDIO_DEBUG` | Enable LM Studio discovery debug logging | — |
-| `CODING_CLI_DATA_DIR` | Custom data directory | `~/.coding-cli` |
-| `EDITOR` | Editor for `/edit` and `Ctrl+X E` | `nvim` |
-| `VISUAL` | Fallback editor if `$EDITOR` is not set | — |
-| `CODING_CLI_SOUNDS` | Set to `1` to enable audio feedback | — |
+| `OLLAMA_BASE_URL` | Ollama server | `http://localhost:11434` |
+| `LMSTUDIO_BASE_URL` | LM Studio server | `http://localhost:1234/v1` |
+| `CODING_CLI_DATA_DIR` | Data directory | `~/.coding-cli` |
+| `EDITOR` / `VISUAL` | Editor for `/edit` | `nvim` |
+| `CODING_CLI_SOUNDS` | Set `1` for audio feedback | — |
 
 ## Development
 
 ```bash
-# Build
-npm run build
-
-# Build and run
-npm run dev
-
-# Type check only
-npx tsc --noEmit
+npm run build        # tsc
+npm run dev          # tsc && node dist/index.js
+npx tsc --noEmit     # type check only
 ```
 
 ## License
