@@ -17,5 +17,7 @@ export {
   renderWelcome,
   renderTurnSeparator,
   renderChannelList,
+  renderTabBar,
   getToolIcon,
+  type TabInfo,
 } from './layout.js';

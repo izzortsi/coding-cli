@@ -40,8 +40,12 @@ export function renderUserLabel(): string {
   return '';
 }
 
-export function renderAssistantLabel(_presetId: string): string {
-  return '';
+export function renderAssistantLabel(_presetId: string, cols = 0): string {
+  const width = cols > 0 ? cols : (process.stdout.columns || 80);
+  const label = `${BOX.arrow} assistant`;
+  const leftPad = 2;
+  const rightLen = Math.max(0, width - leftPad - label.length - 2);
+  return `\n${DIM}${BOX.h.repeat(leftPad)} ${ROLE.assistant}${label}${RESET}${DIM} ${BOX.h.repeat(rightLen)}${RESET}`;
 }
 
 // --- Thinking Block ---
@@ -158,6 +162,29 @@ export function renderWelcome(preset: ModelPreset, channel: ChannelData, project
 
 export function renderTurnSeparator(): string {
   return '';
+}
+
+// --- Tab Bar ---
+
+export interface TabInfo {
+  id: string;
+  name: string;
+  isCurrent: boolean;
+}
+
+export function renderTabBar(tabs: TabInfo[], cols = 0): string {
+  if (tabs.length <= 1) return '';
+  const width = cols > 0 ? cols : (process.stdout.columns || 80);
+
+  const rendered = tabs.map(tab => {
+    if (tab.isCurrent) {
+      return `${FG.brightCyan}${BOX.v}${RESET} ${BOLD}${tab.name}${RESET} `;
+    }
+    return `${DIM}${BOX.v}${RESET} ${DIM}${tab.name}${RESET} `;
+  }).join('');
+
+  const barLen = Math.min(width, 60);
+  return `${rendered}\n${DIM}${BOX.h.repeat(barLen)}${RESET}`;
 }
 
 // --- Channel List ---

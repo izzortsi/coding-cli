@@ -23,7 +23,7 @@ import { createContextUsage, recordTurn, getContextStats, formatContextBar, form
 import { collectStateText, type StateContext } from './state.js';
 import { openEditor } from './editor.js';
 import { SubagentManager } from './subagent.js';
-import { buildSubagentTool } from './tools/subagentTool.js';
+import { buildSubagentTool, type SubagentToolEvent } from './tools/subagentTool.js';
 import { buildIdentityTool } from './tools/identityTool.js';
 import { buildDismissTools } from './tools/dismissTool.js';
 import { loadScriptTools } from './tools/scriptRegistry.js';
@@ -36,15 +36,18 @@ import {
   RESET, BOLD, DIM, FG, UI, ROLE, BOX, fg256,
   Spinner,
   renderMarkdown,
+  renderAssistantLabel,
   renderThinkingBlock,
   renderToolCalls,
   renderUsage,
   renderUsageFooter,
   renderStagedNotice,
   renderWelcome,
+  renderTabBar,
   StreamRenderer,
   getToolIcon,
   showChannelSidebar,
+  type TabInfo,
 } from './ui/index.js';
 
 export interface ReplOptions {
@@ -78,20 +81,52 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   for (const tool of staged.getTools()) registry.register(tool);
   for (const tool of stagedExec.getTools()) registry.register(tool);
 
-  // run_subagent tool — model can spawn subagents from the tool loop
-  const subagentTool = buildSubagentTool(
+  // run_subagent tool — non-blocking subagent dispatch
+  // Background progress events are buffered and displayed at safe UI boundaries.
+  const bgEventQueue: SubagentToolEvent[] = [];
+
+  function flushBgEvents(): void {
+    if (bgEventQueue.length === 0) return;
+    const events = bgEventQueue.splice(0);
+    for (const event of events) {
+      const label = `${DIM}[${event.id}]${RESET}`;
+      if (event.kind === 'tool_call') {
+        process.stdout.write(`  ${FG.brightCyan}${BOX.v}${RESET} ${label} ${FG.gray}${BOX.arrow} ${event.detail}${RESET}\n`);
+      } else if (event.kind === 'done') {
+        process.stdout.write(`  ${FG.brightCyan}${BOX.bl}${BOX.h}${RESET} ${UI.success}${BOX.check}${RESET} ${label} ${DIM}done ${event.detail}${RESET}\n`);
+      }
+    }
+  }
+
+  const subagentKit = buildSubagentTool(
     opts.projectRoot,
     () => opts.providers.get(currentPreset.providerId)!.provider,
     () => currentPreset,
     staged,
-    (agentType, toolName) => {
-      // Show subagent tool progress inline
-      spinner.pause();
-      process.stdout.write(`  ${DIM}[${agentType}]${RESET} ${FG.gray}${BOX.arrow} ${toolName}${RESET}\n`);
-      spinner.resume();
+    () => channel.id,
+    (event) => {
+      if (event.kind === 'start') {
+        // Dispatch banner — fires synchronously during tool execution, safe to display
+        const taskSummary = event.detail.split('\n')[0].substring(0, 80);
+        spinner.pause();
+        process.stdout.write(`\n  ${FG.brightCyan}${BOX.tl}${BOX.h}${RESET} ${BOLD}${event.agentType}${RESET} ${DIM}subagent${RESET} ${FG.gray}${event.id}${RESET}\n`);
+        process.stdout.write(`  ${FG.brightCyan}${BOX.v}${RESET}  ${DIM}${taskSummary}${RESET}\n`);
+        spinner.resume();
+      } else if (event.kind === 'done' && !turnInProgress && !streamingActive) {
+        // Done event while at prompt — notify immediately by clearing and redrawing readline
+        const currentInput = (rl as any).line || '';
+        process.stdout.write('\r\x1b[2K');
+        const label = `${DIM}[${event.id}]${RESET}`;
+        process.stdout.write(`  ${FG.brightCyan}${BOX.bl}${BOX.h}${RESET} ${UI.success}${BOX.check}${RESET} ${label} ${DIM}done ${event.detail}${RESET}\n`);
+        // Redraw the prompt and any partial input the user was typing
+        process.stdout.write(getPrompt() + currentInput);
+      } else {
+        // tool_call events and done events mid-turn — buffer for safe boundary flush
+        bgEventQueue.push(event);
+      }
     },
   );
-  registry.register(subagentTool);
+  registry.register(subagentKit.tool);
 
   // Self-identity tool (registered after channel setup below, but tool ref created now)
   // Uses a getter so it always reads from the current channel
@@ -130,6 +165,22 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   // Resolve provider
   const initialProvider = opts.providers.get(currentPreset.providerId)!.provider;
+
+  // Tab bar — track recent channels for tab display and Ctrl+Left/Right cycling
+  const channelTabs: Array<{ id: string; name: string }> = [{ id: channel.id, name: channel.name }];
+
+  function updateTab(id: string, name: string): void {
+    const idx = channelTabs.findIndex(t => t.id === id);
+    if (idx >= 0) {
+      channelTabs[idx].name = name;
+    } else {
+      channelTabs.push({ id, name });
+    }
+  }
+
+  function getTabInfos(): TabInfo[] {
+    return channelTabs.map(t => ({ id: t.id, name: t.name, isCurrent: t.id === channel.id }));
+  }
 
   // File tracking
   const fileTracker = new FileTracker();
@@ -171,6 +222,21 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           for (const tool of scriptTools) registry.registerScriptTool(tool);
         } catch (err: any) {
           process.stderr.write(`[coding-cli] script registry error: ${err.message}\n`);
+        }
+
+        // Flush buffered background subagent progress events (safe boundary)
+        spinner.pause();
+        flushBgEvents();
+        spinner.resume();
+
+        // Drain completed background subagents for THIS channel only
+        const completedSubagents = subagentKit.drainCompleted(channel.id);
+        for (const sub of completedSubagents) {
+          const injected: ApiMessage = {
+            role: 'user',
+            content: [{ type: 'text', text: `[${sub.id} result]\n${sub.result}` } as TextContent],
+          };
+          engine.messages.push(injected);
         }
 
         // Inject compaction summaries into system prompt
@@ -269,6 +335,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       onStreamStart: (): void => {
         spinner.stop();
         assistantLabelShown = true;
+        process.stdout.write(renderAssistantLabel(currentPreset.id) + '\n');
         streamRenderer = new StreamRenderer();
         streamingActive = true;
       },
@@ -393,6 +460,22 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         return;
       }
 
+      // Ctrl+Left / Ctrl+Right — cycle channel tabs
+      if (key && key.ctrl && (key.name === 'left' || key.name === 'right') && !turnInProgress && !streamingActive) {
+        if (channelTabs.length < 2) return;
+        const currentIdx = channelTabs.findIndex(t => t.id === channel.id);
+        const delta = key.name === 'right' ? 1 : -1;
+        const nextIdx = (currentIdx + delta + channelTabs.length) % channelTabs.length;
+        const nextTab = channelTabs[nextIdx];
+        if (nextTab.id !== channel.id) {
+          switchToChannel(nextTab.id).then((ok) => {
+            if (!ok) console.log(`${UI.warning}Tab channel not found.${RESET}`);
+            prompt();
+          });
+        }
+        return;
+      }
+
       if (key && key.ctrl && key.name === 'x') {
         // Set flag for next keypress
         ctrlXPending = true;
@@ -474,6 +557,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     stagedExec.pendingExecs.clear();
 
     console.log(`${UI.success}${BOX.check}${RESET} New channel: ${BOLD}${name}${RESET} ${DIM}(${channel.id})${RESET}`);
+    updateTab(channel.id, channel.name);
     saveChannel(channel).catch(() => {});
   }
 
@@ -487,6 +571,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     stagedExec.pendingExecs.clear();
 
     console.log(`${UI.success}${BOX.check}${RESET} Branched: ${BOLD}${name}${RESET} ${DIM}(${channel.id}) · ${channel.messages.length} messages carried${RESET}`);
+    updateTab(channel.id, channel.name);
     saveChannel(channel).catch(() => {});
   }
 
@@ -514,6 +599,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       engine.config.thinkingBudget = restored.thinkingBudget;
     }
 
+    updateTab(channel.id, channel.name);
     console.log(`${UI.success}${BOX.check}${RESET} Loaded: ${BOLD}${channel.name}${RESET} ${DIM}(${channel.id}) · ${channel.messages.length} messages · ${currentPreset.displayName}${RESET}`);
     return true;
   }
@@ -713,6 +799,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
       // Response text (only in non-streaming mode — streaming already rendered it)
       if (!wasStreamed && result.finalText) {
+        console.log(renderAssistantLabel(currentPreset.id));
         console.log(renderMarkdown(result.finalText));
       }
 
@@ -822,11 +909,18 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const mode = `${currentMode.color}${currentMode.id}${RESET}`;
     const fast = fastApprove ? ` ${UI.danger}FAST${RESET}` : '';
     const auto = autoApprove ? ` ${FG.brightRed}AUTO${RESET}` : '';
-    return `${preset} ${DIM}${BOX.dot}${RESET} ${ch} ${DIM}${BOX.dot}${RESET} ${mode}${fast}${auto} ${FG.brightCyan}❯${RESET} `;
+    const bgCount = subagentKit.runningCount();
+    const agents = bgCount > 0 ? ` ${FG.brightCyan}${bgCount} agent${bgCount > 1 ? 's' : ''}${RESET}` : '';
+    return `${preset} ${DIM}${BOX.dot}${RESET} ${ch} ${DIM}${BOX.dot}${RESET} ${mode}${fast}${auto}${agents} ${FG.brightCyan}❯${RESET} `;
   }
 
   function prompt(): void {
     if (!running) return;
+    // Flush any background subagent events before showing prompt (safe boundary)
+    flushBgEvents();
+    // Show tab bar if there are multiple channels
+    const tabBar = renderTabBar(getTabInfos());
+    if (tabBar) process.stdout.write(tabBar + '\n');
     rl.question(getPrompt(), async (input) => {
       const trimmed = input.trim();
 

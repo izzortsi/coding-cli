@@ -2,13 +2,13 @@
  * Subagent Tool — Model-invokable tool for spawning subagents
  *
  * The model calls `run_subagent` to delegate bounded investigation or
- * implementation tasks. The subagent runs autonomously with its own
- * conversation context and tool access, then returns its findings
- * as the tool result.
+ * implementation tasks. Subagents run non-blocking in the background —
+ * the tool returns immediately with an acknowledgment and the results
+ * are injected into the conversation when the subagent completes
+ * (before the next API call).
  *
- * Multiple run_subagent calls in the same response execute concurrently
- * (the engine dispatches all tool calls in a response via Promise.all
- * or sequentially — concurrent by default in the registry).
+ * Multiple run_subagent calls in the same response execute truly
+ * concurrently since they all fire-and-forget.
  *
  * Agent types:
  *   explore — Deep read-only investigation. 25 steps, 5 min.
@@ -16,7 +16,7 @@
  *   impl    — Investigation + staged change proposals. 30 steps, 8 min.
  */
 
-import type { ToolDef, Provider } from '../types.js';
+import type { ToolDef, Provider, TurnResult } from '../types.js';
 import type { ModelPreset } from '../presets.js';
 import { Engine } from '../engine.js';
 import { ToolRegistry } from './registry.js';
@@ -81,27 +81,68 @@ Your proposed changes will be collected and presented to the operator for approv
 
 // --- Progress callback type ---
 
-export type SubagentToolProgress = (agentType: string, toolName: string) => void;
+export interface SubagentToolEvent {
+  kind: 'start' | 'tool_call' | 'done';
+  id: string;
+  agentType: string;
+  /** Tool name (for 'tool_call'), task prompt (for 'start'), or summary (for 'done') */
+  detail: string;
+}
+
+export type SubagentToolProgress = (event: SubagentToolEvent) => void;
+
+// --- Background tracking ---
+
+interface BackgroundSubagent {
+  id: string;
+  channelId: string;
+  agentType: string;
+  prompt: string;
+  startedAt: number;
+  promise: Promise<string>;
+}
+
+export interface CompletedSubagent {
+  id: string;
+  channelId: string;
+  agentType: string;
+  result: string;
+  elapsedMs: number;
+}
+
+export interface SubagentToolKit {
+  tool: ToolDef;
+  /** Drain completed background subagents for a specific channel. Only returns results matching the channel ID. */
+  drainCompleted(channelId: string): CompletedSubagent[];
+  /** Number of currently running background subagents */
+  runningCount(): number;
+}
 
 // --- Tool Builder ---
 
+let subagentCounter = 0;
+
 /**
- * Build the run_subagent tool.
+ * Build the run_subagent tool kit (tool + background tracking).
  *
  * @param projectRoot — CWD for subagent tool operations
  * @param getProvider — Returns the current provider (called at execution time)
  * @param getPreset — Returns the current preset (called at execution time)
  * @param parentStaged — Parent StagedWriteManager; impl subagent writes are merged into it
- * @param onProgress — Called when the subagent executes a tool
+ * @param onProgress — Called on subagent lifecycle events (start, tool_call, done)
  */
 export function buildSubagentTool(
   projectRoot: string,
   getProvider: () => Provider,
   getPreset: () => ModelPreset,
   parentStaged: StagedWriteManager,
+  getChannelId: () => string,
   onProgress?: SubagentToolProgress,
-): ToolDef {
-  return {
+): SubagentToolKit {
+  const running: Map<string, BackgroundSubagent> = new Map();
+  const completed: CompletedSubagent[] = [];
+
+  const tool: ToolDef = {
     name: 'run_subagent',
     description: `Spawn a specialized subagent for bounded investigation or implementation. The subagent runs autonomously with its own conversation and tools, then returns its findings.
 
@@ -138,67 +179,116 @@ STOP CONDITION: How the agent knows it is done`,
         throw new Error(`Unknown agent type: "${agentType}". Available: explore, triage, impl`);
       }
 
-      const provider = getProvider();
-      const preset = getPreset();
+      const id = `${agentType}-${++subagentCounter}`;
+      const channelId = getChannelId();
+      const startedAt = Date.now();
 
-      // Build isolated tool registry
-      const registry = new ToolRegistry();
-      for (const tool of buildBuiltinTools(projectRoot)) registry.register(tool);
+      // Notify start
+      onProgress?.({ kind: 'start', id, agentType, detail: prompt });
 
-      // impl agents get staging tools; their writes are merged into parentStaged on completion
-      const subStaged = config.allowStaging ? new StagedWriteManager(projectRoot) : null;
-      if (subStaged) {
-        for (const tool of subStaged.getTools()) registry.register(tool);
-      }
+      // Build the background task
+      const bgPromise = (async (): Promise<string> => {
+        const provider = getProvider();
+        const preset = getPreset();
 
-      // Build engine
-      const engine = new Engine(provider, registry, {
-        systemPrompt: config.systemPrompt,
-        maxTokens: preset.maxTokens,
-        temperature: preset.temperature,
-        thinkingBudget: preset.thinkingBudget,
-        maxToolSteps: config.maxSteps,
-        hooks: {
-          onAfterToolResult: (toolName: string): void => {
-            onProgress?.(agentType, toolName);
+        // Build isolated tool registry
+        const registry = new ToolRegistry();
+        for (const t of buildBuiltinTools(projectRoot)) registry.register(t);
+
+        // impl agents get staging tools
+        const subStaged = config.allowStaging ? new StagedWriteManager(projectRoot) : null;
+        if (subStaged) {
+          for (const t of subStaged.getTools()) registry.register(t);
+        }
+
+        // Build engine
+        const engine = new Engine(provider, registry, {
+          systemPrompt: config.systemPrompt,
+          maxTokens: preset.maxTokens,
+          temperature: preset.temperature,
+          thinkingBudget: preset.thinkingBudget,
+          maxToolSteps: config.maxSteps,
+          hooks: {
+            onAfterToolResult: (toolName: string): void => {
+              onProgress?.({ kind: 'tool_call', id, agentType, detail: toolName });
+            },
           },
-        },
+        });
+
+        // Run with timeout
+        const turnPromise = engine.turn(prompt, preset.modelId);
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), config.timeoutMs),
+        );
+
+        try {
+          const result = await Promise.race([turnPromise, timeoutPromise]);
+
+          // Merge impl subagent staged writes into parent
+          let stagedNote = '';
+          if (subStaged) {
+            const writes = subStaged.list();
+            if (writes.length > 0) {
+              for (const w of writes) {
+                parentStaged.pendingWrites.set(w.token, w);
+              }
+              stagedNote = `\n[${writes.length} staged write(s) merged — use /files to review]`;
+            }
+          }
+
+          const steps = `${result.toolCalls.length} steps`;
+          const inTok = result.usage.inputTokens;
+          const outTok = result.usage.outputTokens;
+          const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+          const header = `[subagent:${agentType} | completed | ${steps} | ${elapsedSec}s | ${inTok} in / ${outTok} out]`;
+
+          return `${header}${stagedNote}\n\n${result.finalText}`;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg === 'timeout') {
+            return `[subagent:${agentType} | timed out after ${config.timeoutMs / 1000}s]`;
+          }
+          return `[subagent:${agentType} | failed: ${msg}]`;
+        }
+      })();
+
+      // Store background task
+      running.set(id, { id, channelId, agentType, prompt, startedAt, promise: bgPromise });
+
+      // When done, move to completed queue and notify UI
+      bgPromise.then((resultText) => {
+        running.delete(id);
+        const elapsedMs = Date.now() - startedAt;
+        completed.push({ id, channelId, agentType, result: resultText, elapsedMs });
+        onProgress?.({ kind: 'done', id, agentType, detail: `${(elapsedMs / 1000).toFixed(1)}s` });
       });
 
-      // Run with timeout
-      const turnPromise = engine.turn(prompt, preset.modelId);
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), config.timeoutMs),
-      );
+      const taskPreview = prompt.split('\n')[0].substring(0, 80);
+      return `[subagent:${agentType} dispatched (${id}) — running in background]\nTask: ${taskPreview}\nResults will be injected when complete.`;
+    },
+  };
 
-      try {
-        const result = await Promise.race([turnPromise, timeoutPromise]);
+  return {
+    tool,
 
-        // Merge impl subagent staged writes into parent
-        let stagedNote = '';
-        if (subStaged) {
-          const writes = subStaged.list();
-          if (writes.length > 0) {
-            for (const w of writes) {
-              parentStaged.pendingWrites.set(w.token, w);
-            }
-            stagedNote = `\n[${writes.length} staged write(s) merged — use /files to review]`;
-          }
+    drainCompleted(channelId: string): CompletedSubagent[] {
+      if (completed.length === 0) return [];
+      const matching: CompletedSubagent[] = [];
+      const remaining: CompletedSubagent[] = [];
+      for (const sub of completed) {
+        if (sub.channelId === channelId) {
+          matching.push(sub);
+        } else {
+          remaining.push(sub);
         }
-
-        const elapsed = `${result.toolCalls.length} steps`;
-        const inTok = result.usage.inputTokens;
-        const outTok = result.usage.outputTokens;
-        const header = `[subagent:${agentType} | completed | ${elapsed} | ${inTok} in / ${outTok} out]`;
-
-        return `${header}${stagedNote}\n\n${result.finalText}`;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg === 'timeout') {
-          return `[subagent:${agentType} | timed out after ${config.timeoutMs / 1000}s]`;
-        }
-        return `[subagent:${agentType} | failed: ${msg}]`;
       }
+      completed.length = 0;
+      completed.push(...remaining);
+      return matching;
+    },
+
+    runningCount(): number {
+      return running.size;
     },
   };
 }
