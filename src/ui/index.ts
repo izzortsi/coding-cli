@@ -22,4 +22,4 @@ export {
   getToolKeyArg,
   type TabInfo,
 } from './layout.js';
-export { playToolComplete, playTurnComplete, setSoundsEnabled } from './sounds.js';
+export { playToolComplete, playTurnComplete, setSoundsEnabled, isSoundsEnabled } from './sounds.js';

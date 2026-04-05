@@ -80,7 +80,7 @@ export function getToolIcon(name: string): string {
 }
 
 /**
- * Returns the most informative single argument for a tool invocation.
+ * Extract the most informative argument from a tool call for display.
  * Returns a short string like "src/repl.ts" or `"pattern" in src/`.
  */
 export function getToolKeyArg(toolName: string, input?: Record<string, unknown>): string {
@@ -141,12 +141,19 @@ export function renderUsageFooter(usageLine: string, ctxBar: string, cols: numbe
   return `\n${' '.repeat(pad)}${parts}`;
 }
 
-// Keep the old renderUsage for callers that only need the string.
-export function renderUsage(usage: Usage): string {
+// Usage line: shows context window size (last call input) + growth delta + output.
+export function renderUsage(usage: Usage, lastCallInputTokens?: number, prevContextSize?: number): string {
   if (usage.inputTokens === 0 && usage.outputTokens === 0) return '';
-  const inK = (usage.inputTokens / 1000).toFixed(1);
+  const ctxTokens = lastCallInputTokens || usage.inputTokens;
+  const ctxK = (ctxTokens / 1000).toFixed(1);
   const outK = (usage.outputTokens / 1000).toFixed(1);
-  return `${DIM}${inK}K in ${BOX.dot} ${outK}K out${RESET}`;
+  const growthStr = prevContextSize && prevContextSize > 0
+    ? ` (+${((ctxTokens - prevContextSize) / 1000).toFixed(1)}K)`
+    : '';
+  const cacheInfo = usage.cacheReadInputTokens
+    ? ` ${BOX.dot} ${(usage.cacheReadInputTokens / 1000).toFixed(1)}K cached`
+    : '';
+  return `${DIM}${ctxK}K in${growthStr} ${BOX.dot} ${outK}K out${cacheInfo}${RESET}`;
 }
 
 // --- Staged Writes Notification ---
