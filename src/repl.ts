@@ -6,9 +6,13 @@ import { findPreset } from './presets.js';
 import { Engine } from './engine.js';
 import { ToolRegistry } from './tools/registry.js';
 import { buildBuiltinTools } from './tools/builtins.js';
+import { buildSelfCompactTool } from './tools/selfCompactTool.js';
+import { buildTestRunnerTool } from './tools/testRunner.js';
 import { StagedWriteManager } from './tools/staged.js';
 import { StagedExecManager } from './tools/stagedExec.js';
 import { handleCommand, type CommandContext } from './commands.js';
+import { initLispRuntime } from './lispSetup.js';
+import type { LispRuntime } from './lisp/core.js';
 import {
   createChannel,
   branchChannel as branchChannelData,
@@ -147,6 +151,20 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     registry.register(tool);
   }
 
+  // Self-compact — model-driven compaction when context pressure is high
+  registry.register(buildSelfCompactTool({
+    getChannel: () => channel,
+    getMessages: () => engine.messages,
+    setMessages: (msgs) => { engine.messages = msgs; },
+    syncChannel: () => syncChannelFromEngine(),
+    saveChannel: (ch) => saveChannel(ch),
+    getProvider: () => opts.providers.get(currentPreset.providerId)!.provider,
+    getModel: () => currentPreset.modelId,
+  }));
+
+  // Test runner — auto-detects project test framework, supports channel config override
+  registry.register(buildTestRunnerTool(opts.projectRoot, () => channel.testCommand));
+
   // Apply initial mode filter
   registry.setToolFilter(currentMode.excludeTools);
 
@@ -165,6 +183,15 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   // Resolve provider
   const initialProvider = opts.providers.get(currentPreset.providerId)!.provider;
+
+  // Lisp Agent Runtime — wired to tool registry and LLM provider for self-improving strategies
+  const lispRuntime: LispRuntime | undefined = await initLispRuntime({
+    groveRoot: cliRoot || opts.projectRoot,
+    registry,
+    channelLispState: channel.lispState,
+    getProvider: () => opts.providers.get(currentPreset.providerId)!.provider,
+    getModelId: () => currentPreset.modelId,
+  });
 
   // Tab bar — track recent channels for tab display and Ctrl+Left/Right cycling
   const channelTabs: Array<{ id: string; name: string }> = [{ id: channel.id, name: channel.name }];
@@ -523,6 +550,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     channel.lastActivity = Date.now();
     channel.trackedFiles = fileTracker.toJSON();
     channel.contextUsage = contextUsage;
+    // Persist Lisp agent state
+    if (lispRuntime) {
+      const defs = lispRuntime.userDefinitions();
+      channel.lispState = defs.length > 0 ? lispRuntime.serialize() : undefined;
+    }
   }
 
   function switchMode(mode: AgentMode): void {
@@ -706,6 +738,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     showSidebar: async (): Promise<void> => { await openSidebar(); },
     projectRoot: opts.projectRoot,
     cliRoot,
+    lispRuntime,
     runBootstrap: async (): Promise<string> => {
       spinner.start('bootstrapping');
 
