@@ -49,7 +49,9 @@ export interface ToolDefinition {
   input_schema: ToolInputSchema;
 }
 
-export interface ToolDef extends ToolDefinition {
+export interface ToolDef extends Omit<ToolDefinition, 'description'> {
+  /** Static description string, or a lazy getter called each time definitions are built. */
+  description: string | (() => string);
   execute: (args: Record<string, unknown>) => Promise<string>;
 }
 
@@ -66,6 +68,10 @@ export interface ScriptToolDef {
 export interface Usage {
   inputTokens: number;
   outputTokens: number;
+  /** Tokens written to prompt cache on this request */
+  cacheCreationInputTokens?: number;
+  /** Tokens read from prompt cache on this request */
+  cacheReadInputTokens?: number;
 }
 
 export interface ProviderResponse {
