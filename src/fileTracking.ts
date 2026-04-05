@@ -65,20 +65,30 @@ export class FileTracker {
 
   /**
    * Format tracked files for state injection.
+   * Caps at maxFiles most recent entries, includes drift warnings.
    */
-  formatForState(): string | null {
+  async formatForState(maxFiles = 20): Promise<string | null> {
     const files = this.list();
     if (files.length === 0) return null;
 
-    const lines = files.map(f => {
-      const ago = formatTimeAgo(f.timestamp);
-      return `  ${f.path} — read ${ago}`;
-    });
+    const shown = files.slice(0, maxFiles);
 
-    return [
-      `---[ STATE: tracked_files (${files.length}) ]---`,
-      ...lines,
-    ].join('\n');
+    // Check drift for all files in parallel instead of sequentially
+    const driftResults = await Promise.all(shown.map(f => this.hasDrifted(f.path)));
+
+    const lines: string[] = [];
+    for (let i = 0; i < shown.length; i++) {
+      const f = shown[i];
+      const ago = formatTimeAgo(f.timestamp);
+      const drift = driftResults[i] ? ' ⚠ CHANGED ON DISK' : '';
+      lines.push(`  ${f.path} — read ${ago}${drift}`);
+    }
+
+    const header = files.length > maxFiles
+      ? `---[ STATE: tracked_files (${maxFiles} of ${files.length}) ]---`
+      : `---[ STATE: tracked_files (${files.length}) ]---`;
+
+    return [header, ...lines].join('\n');
   }
 
   clear(): void {

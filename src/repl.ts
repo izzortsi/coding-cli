@@ -311,7 +311,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           : messages;
 
         // Inject ephemeral state into the last text-bearing user message
-        const stateText = collectStateText(getStateCtx());
+        const stateText = await collectStateText(getStateCtx());
         const lastTextUserIdx = findLastTextUserIndex(active);
         if (lastTextUserIdx >= 0) {
           const msg = active[lastTextUserIdx];
@@ -706,7 +706,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         return `${UI.danger}${BOX.cross}${RESET} ${err instanceof Error ? err.message : String(err)}`;
       }
     },
-    getStateText: () => collectStateText(getStateCtx()),
+    getStateText: async () => collectStateText(getStateCtx()),
     getContextInfo: () => formatContextInfo(getContextStats(contextUsage, currentPreset.contextWindow)),
     getMessages: () => engine.messages,
     subagents: subagentManager,

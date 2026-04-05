@@ -136,7 +136,7 @@ export function createChannel(name: string, presetId: string, systemPrompt: stri
     compactionClusters: [],
     dormantBefore: 0,
     trackedFiles: {},
-    contextUsage: { turnHistory: [], lifetimeInputTokens: 0, lifetimeOutputTokens: 0, lifetimeApiCalls: 0 },
+    contextUsage: { turnHistory: [], lifetimeInputTokens: 0, lifetimeOutputTokens: 0, lifetimeApiCalls: 0, lifetimeCacheReadTokens: 0, lifetimeCacheCreationTokens: 0 },
     identity: {},
   };
 }

@@ -17,6 +17,8 @@ export interface ContextUsage {
   lifetimeInputTokens: number;
   lifetimeOutputTokens: number;
   lifetimeApiCalls: number;
+  lifetimeCacheReadTokens: number;
+  lifetimeCacheCreationTokens: number;
 }
 
 export interface ContextStats {
@@ -25,13 +27,15 @@ export interface ContextStats {
   utilization: number;
   estimatedRemaining: number;
   turnCount: number;
-  avgInputPerTurn: number;
+  avgContextSize: number;
   avgOutputPerTurn: number;
   growthPerTurn: number;
   estimatedTurnsRemaining: number;
   lifetimeInput: number;
   lifetimeOutput: number;
   lifetimeApiCalls: number;
+  lifetimeCacheRead: number;
+  lifetimeCacheCreation: number;
 }
 
 export function createContextUsage(): ContextUsage {
@@ -40,6 +44,8 @@ export function createContextUsage(): ContextUsage {
     lifetimeInputTokens: 0,
     lifetimeOutputTokens: 0,
     lifetimeApiCalls: 0,
+    lifetimeCacheReadTokens: 0,
+    lifetimeCacheCreationTokens: 0,
   };
 }
 
@@ -51,10 +57,14 @@ export function recordTurn(
   inputTokens: number,
   outputTokens: number,
   lastCallInputTokens: number,
+  cacheReadTokens?: number,
+  cacheCreationTokens?: number,
 ): void {
   ctx.lifetimeInputTokens += inputTokens;
   ctx.lifetimeOutputTokens += outputTokens;
   ctx.lifetimeApiCalls += 1;
+  ctx.lifetimeCacheReadTokens = (ctx.lifetimeCacheReadTokens || 0) + (cacheReadTokens || 0);
+  ctx.lifetimeCacheCreationTokens = (ctx.lifetimeCacheCreationTokens || 0) + (cacheCreationTokens || 0);
 
   ctx.turnHistory.push({
     inputTokens,
@@ -85,7 +95,7 @@ export function getContextStats(ctx: ContextUsage, contextLimit: number): Contex
   const recent = ctx.turnHistory.slice(-10);
   const getSize = (t: TurnRecord) => t.lastCallInputTokens || t.inputTokens || 0;
 
-  const avgInputPerTurn = recent.length > 0
+  const avgContextSize = recent.length > 0
     ? recent.reduce((s, t) => s + getSize(t), 0) / recent.length : 0;
   const avgOutputPerTurn = recent.length > 0
     ? recent.reduce((s, t) => s + t.outputTokens, 0) / recent.length : 0;
@@ -110,13 +120,15 @@ export function getContextStats(ctx: ContextUsage, contextLimit: number): Contex
     utilization,
     estimatedRemaining,
     turnCount,
-    avgInputPerTurn,
+    avgContextSize,
     avgOutputPerTurn,
     growthPerTurn,
     estimatedTurnsRemaining,
     lifetimeInput: ctx.lifetimeInputTokens,
     lifetimeOutput: ctx.lifetimeOutputTokens,
     lifetimeApiCalls: ctx.lifetimeApiCalls,
+    lifetimeCacheRead: ctx.lifetimeCacheReadTokens || 0,
+    lifetimeCacheCreation: ctx.lifetimeCacheCreationTokens || 0,
   };
 }
 
@@ -125,7 +137,7 @@ export function getContextStats(ctx: ContextUsage, contextLimit: number): Contex
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
+  return String(Math.round(n));
 }
 
 function utilBar(utilization: number, width: number = 20): string {
@@ -159,17 +171,19 @@ export function formatContextBar(stats: ContextStats): string {
 export function formatContextState(stats: ContextStats): string {
   const lines = [
     '---[ STATE: context_window ]---',
-    `Context: ${fmtTokens(stats.estimatedUsed)} / ${fmtTokens(stats.contextLimit)} (${(stats.utilization * 100).toFixed(1)}%)`,
-    `Remaining: ~${fmtTokens(stats.estimatedRemaining)} tokens`,
-    `Turns: ${stats.turnCount} | Avg input/turn: ${fmtTokens(stats.avgInputPerTurn)}`,
+    `Context: ${fmtTokens(stats.estimatedUsed)}/${fmtTokens(stats.contextLimit)} (${(stats.utilization * 100).toFixed(1)}%), ~${fmtTokens(stats.estimatedRemaining)} free`,
   ];
 
+  // Combine turns + growth + turns-remaining into one line; drop noise when remaining > 100
+  const turnsParts: string[] = [`Turns: ${stats.turnCount}`];
   if (stats.growthPerTurn > 0) {
-    const turnsStr = stats.estimatedTurnsRemaining === Infinity ? '∞' : `~${stats.estimatedTurnsRemaining}`;
-    lines.push(`Growth: ~${fmtTokens(stats.growthPerTurn)}/turn | Est. turns remaining: ${turnsStr}`);
+    turnsParts.push(`growth ~${fmtTokens(stats.growthPerTurn)}/turn`);
+    if (stats.estimatedTurnsRemaining !== Infinity && stats.estimatedTurnsRemaining <= 100) {
+      turnsParts.push(`~${stats.estimatedTurnsRemaining} left`);
+    }
   }
-
-  lines.push(`Lifetime: ${fmtTokens(stats.lifetimeInput)} in, ${fmtTokens(stats.lifetimeOutput)} out`);
+  lines.push(turnsParts.join(' | '));
+  lines.push(`Lifetime: ${fmtTokens(stats.lifetimeInput)} in / ${fmtTokens(stats.lifetimeOutput)} out`);
   return lines.join('\n');
 }
 
@@ -183,12 +197,19 @@ export function formatContextInfo(stats: ContextStats): string[] {
   lines.push(`Context: ${fmtTokens(stats.estimatedUsed)} / ${fmtTokens(stats.contextLimit)} (${pct}%) ${bar}`);
 
   if (stats.turnCount > 0) {
-    lines.push(`Turns: ${stats.turnCount} | Avg: ${fmtTokens(stats.avgInputPerTurn)} in, ${fmtTokens(stats.avgOutputPerTurn)} out per turn`);
+    lines.push(`Turns: ${stats.turnCount} | Avg context: ${fmtTokens(stats.avgContextSize)}, out/turn: ${fmtTokens(stats.avgOutputPerTurn)}`);
     if (stats.growthPerTurn > 0) {
       const turnsStr = stats.estimatedTurnsRemaining === Infinity ? '∞' : `~${stats.estimatedTurnsRemaining}`;
       lines.push(`Growth: ~${fmtTokens(stats.growthPerTurn)}/turn | Est. turns remaining: ${turnsStr}`);
     }
-    lines.push(`Lifetime: ${fmtTokens(stats.lifetimeInput)} in, ${fmtTokens(stats.lifetimeOutput)} out | ${stats.lifetimeApiCalls} API calls`);
+    const lifetimeLine = `Lifetime: ${fmtTokens(stats.lifetimeInput)} in, ${fmtTokens(stats.lifetimeOutput)} out | ${stats.lifetimeApiCalls} API calls`;
+    lines.push(lifetimeLine);
+    if (stats.lifetimeCacheRead > 0 || stats.lifetimeCacheCreation > 0) {
+      const hitRate = stats.lifetimeInput > 0
+        ? ((stats.lifetimeCacheRead / stats.lifetimeInput) * 100).toFixed(0)
+        : '0';
+      lines.push(`Cache: ${fmtTokens(stats.lifetimeCacheRead)} read, ${fmtTokens(stats.lifetimeCacheCreation)} created (${hitRate}% hit rate)`);
+    }
   }
   return lines;
 }

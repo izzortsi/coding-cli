@@ -58,6 +58,7 @@ async function runSingleTurn(flags: ParsedFlags): Promise<void> {
       console.error('  ANTHROPIC_API_KEY=... — API key');
       console.error('  ZHIPU_API_KEY=...     — z.ai');
       console.error('  Ollama running        — local models');
+      console.error('  LM Studio running     — local models');
     }
     process.exit(1);
   }
@@ -187,6 +188,7 @@ Environment:
     console.error('  ANTHROPIC_API_KEY=... — API key');
     console.error('  ZHIPU_API_KEY=...     — z.ai');
     console.error('  Ollama running        — local models');
+    console.error('  LM Studio running     — local models');
     process.exit(1);
   }
 

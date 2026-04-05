@@ -66,7 +66,7 @@ export interface CommandContext {
   branchChannel: (name: string) => void;
   loadChannel: (id: string) => Promise<boolean>;
   compact: (keepRecent: number) => Promise<string>;
-  getStateText: () => string;
+  getStateText: () => Promise<string>;
   getContextInfo: () => string[];
   getMessages: () => ApiMessage[];
   projectRoot: string;

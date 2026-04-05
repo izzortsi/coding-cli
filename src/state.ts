@@ -37,7 +37,7 @@ export interface StateContext {
  * Collect all ephemeral state as a single text block.
  * Used both for injection (onBeforeApiCall) and /state display.
  */
-export function collectStateText(ctx: StateContext): string {
+export async function collectStateText(ctx: StateContext): Promise<string> {
   const parts: string[] = [];
 
   // Datetime
@@ -75,7 +75,7 @@ export function collectStateText(ctx: StateContext): string {
   ].join('\n'));
 
   // Tracked files
-  const filesState = ctx.fileTracker.formatForState();
+  const filesState = await ctx.fileTracker.formatForState();
   if (filesState) parts.push(filesState);
 
   // Pending writes
