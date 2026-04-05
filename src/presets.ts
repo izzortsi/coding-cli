@@ -1,4 +1,4 @@
-export type ProviderId = 'anthropic' | 'zai' | 'ollama';
+export type ProviderId = 'anthropic' | 'zai' | 'ollama' | 'lm-studio';
 
 export interface ModelPreset {
   id: string;
