@@ -94,7 +94,15 @@ export class AnthropicProvider implements Provider {
       params.thinking = { type: 'enabled', budget_tokens: thinkingBudget };
       params.temperature = 1;
     } else {
-      params.temperature = temperature;
+      // claude-opus-4-6 (1M context variant) rejects temperature != 1 unless
+      // thinking is enabled. Force temperature=1 for this model when thinking
+      // is off to avoid 400 "Invalid request data" from callers that use low
+      // temperatures (e.g. compaction, commit-message generation).
+      if (model.startsWith('claude-opus-4-6')) {
+        params.temperature = 1;
+      } else {
+        params.temperature = temperature;
+      }
     }
 
     return params;
