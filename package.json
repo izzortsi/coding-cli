@@ -1,7 +1,7 @@
 {
   "name": "coding-cli",
-  "version": "0.1.0",
-  "description": "Interactive CLI for multi-turn LLM conversations with tool use and staged writes. z.ai provider.",
+  "version": "0.2.0",
+  "description": "Interactive CLI for multi-turn LLM conversations with tool use, staged writes, and a lisp runtime. Providers: Anthropic (API + OAuth), z.ai, Ollama, LM Studio.",
   "type": "module",
   "main": "dist/index.js",
   "bin": { "coding-cli": "dist/index.js" },
