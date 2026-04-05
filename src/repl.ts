@@ -1,5 +1,4 @@
 import readline from 'node:readline';
-import { spawn } from 'node:child_process';
 import type { Provider, ApiMessage, MessageContent, TextContent, ThinkingContent, ToolResultContent } from './types.js';
 import type { ModelPreset } from './presets.js';
 import { findPreset } from './presets.js';
@@ -30,6 +29,8 @@ import { SubagentManager } from './subagent.js';
 import { buildSubagentTool, type SubagentToolEvent } from './tools/subagentTool.js';
 import { buildIdentityTool } from './tools/identityTool.js';
 import { buildDismissTools } from './tools/dismissTool.js';
+import { safetyTrimResults } from './autoTrim.js';
+import { dedupeRedundantResults } from './dedupe.js';
 import { loadScriptTools } from './tools/scriptRegistry.js';
 import { DEFAULT_SYSTEM_PROMPT } from './prompts.js';
 import { buildBootstrapSteps, executeBootstrap } from './bootstrap.js';
@@ -50,9 +51,14 @@ import {
   renderTabBar,
   StreamRenderer,
   getToolIcon,
+  getToolKeyArg,
   showChannelSidebar,
+  playToolComplete,
+  playTurnComplete,
   type TabInfo,
 } from './ui/index.js';
+
+const SOUNDS_ENABLED = process.env.CODING_CLI_SOUNDS === '1';
 
 export interface ReplOptions {
   providers: Map<string, { provider: Provider; label: string }>;
@@ -266,8 +272,37 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           engine.messages.push(injected);
         }
 
-        // Inject compaction summaries into system prompt
+        // Inject compaction topic clusters into system prompt
         engine.config.systemPrompt = buildEffectiveSystemPrompt(systemPrompt, channel) + currentMode.promptAddendum;
+
+        // Always-on dedup: stub redundant re-readable results (same tool + same args).
+        // Safe because re-readable tools can be reproduced; later call's result supersedes.
+        const getHash = (p: string) => { const entry = fileTracker.tracked.get(p); return entry?.contentHash || null; };
+        const dedupResult = dedupeRedundantResults(engine.messages, getHash);
+        if (dedupResult.deduped > 0) {
+          process.stderr.write(`[coding-cli] Deduped ${dedupResult.deduped} redundant result(s), ~${Math.round(dedupResult.tokensFreed / 1000)}K tokens freed\n`);
+        }
+
+        // Safety-net trim: only fires at critical context utilization (>95%)
+        // Under normal conditions, the model manages its own tool results via
+        // dismiss_result/dismiss_results and self_compact.
+        const preCallStats = getContextStats(contextUsage, currentPreset.contextWindow);
+        const trimConfig = channel.trimConfig;
+        const clusterSummaries = (channel.compactionClusters || []).map(c => c.summary);
+        const trimResult = safetyTrimResults(
+          engine.messages,
+          getHash,
+          {
+            utilization: preCallStats.utilization,
+            threshold: trimConfig?.safetyThreshold,
+            protectRecent: trimConfig?.protectRecent,
+            minTrimSize: trimConfig?.minTrimSize,
+            clusterSummaries,
+          },
+        );
+        if (trimResult) {
+          process.stderr.write(`[coding-cli] Safety trim: ${trimResult.trimmed} results, ~${Math.round(trimResult.tokensFreed / 1000)}K tokens freed\n`);
+        }
 
         // Slice dormant messages
         const dormantBefore = channel.dormantBefore || 0;
@@ -299,7 +334,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             const block = msg.content[b];
             if (block.type === 'tool_result') {
               const tr = block as ToolResultContent;
-              if (!tr.content.startsWith('[Dismissed:')) {
+              if (!tr.content.startsWith('[Dismissed:') && !tr.content.startsWith('[Auto-trimmed:')) {
                 toolResultPositions.push({ msgIdx: m, blockIdx: b });
               }
             }
@@ -319,33 +354,26 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         return active;
       },
 
-      onAfterToolResult: (toolName: string, result: string): void => {
+      onAfterToolResult: (toolName: string, result: string, input?: Record<string, unknown>): void => {
         // Pause spinner so its interval doesn't overwrite the tool result line
         spinner.pause();
         const isError = result.startsWith('Error');
         const status = isError ? `${UI.danger}${BOX.cross}${RESET}` : `${UI.success}${BOX.check}${RESET}`;
         const toolIcon = getToolIcon(toolName);
+
+        // Show key arg for common tools (file path, search pattern, etc.)
+        const keyArg = getToolKeyArg(toolName, input);
+        const argLabel = keyArg ? ` ${FG.gray}${keyArg}${RESET}` : '';
         const preview = result.substring(0, 60).replace(/\n/g, ' ');
-        process.stdout.write(`  ${status} ${toolIcon} ${FG.white}${toolName}${RESET} ${DIM}${preview}${RESET}\n`);
-        spawn('sh', ['-c', 'paplay --volume=39321 /usr/share/sounds/freedesktop/stereo/device-added.oga 2>/dev/null || printf "\\a"'], { stdio: 'ignore' }).unref();
+        process.stdout.write(`  ${status} ${toolIcon} ${FG.white}${toolName}${RESET}${argLabel} ${DIM}${preview}${RESET}\n`);
+        if (SOUNDS_ENABLED) playToolComplete();
         spinner.resume();
 
         // Track files read by read_file tool
-        if (toolName === 'read_file') {
-          // Extract file path from the tool result (it's the arg, but we don't have it here)
-          // Instead, track from the most recent tool_use block
-          const lastMsg = engine.messages[engine.messages.length - 1];
-          if (lastMsg && lastMsg.role === 'assistant') {
-            for (const block of lastMsg.content) {
-              if (block.type === 'tool_use' && (block as any).name === 'read_file') {
-                const filePath = (block as any).input?.file_path as string;
-                if (filePath) {
-                  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(opts.projectRoot, filePath);
-                  fileTracker.trackFile(resolved).catch(() => {});
-                }
-              }
-            }
-          }
+        if (toolName === 'read_file' && input?.file_path) {
+          const filePath = input.file_path as string;
+          const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(opts.projectRoot, filePath);
+          fileTracker.trackFile(resolved).catch(() => {});
         }
       },
 
@@ -919,7 +947,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       console.log(renderUsageFooter(usageLine, ctxBar, cols));
 
       // Turn-complete sound — distinct from per-tool beeps
-      spawn('sh', ['-c', 'paplay /usr/share/sounds/freedesktop/stereo/message-new-instant.oga 2>/dev/null || printf "\\a"'], { stdio: 'ignore' }).unref();
+      if (SOUNDS_ENABLED) playTurnComplete();
 
       // Auto-save
       syncChannelFromEngine();
@@ -942,7 +970,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const mode = `${currentMode.color}${currentMode.id}${RESET}`;
     const fast = fastApprove ? ` ${UI.danger}FAST${RESET}` : '';
     const auto = autoApprove ? ` ${FG.brightRed}AUTO${RESET}` : '';
-    const bgCount = subagentKit.runningCount();
+    const bgCount = subagentManager.runningCount();
     const agents = bgCount > 0 ? ` ${FG.brightCyan}${bgCount} agent${bgCount > 1 ? 's' : ''}${RESET}` : '';
     return `${preset} ${DIM}${BOX.dot}${RESET} ${ch} ${DIM}${BOX.dot}${RESET} ${mode}${fast}${auto}${agents} ${FG.brightCyan}❯${RESET} `;
   }

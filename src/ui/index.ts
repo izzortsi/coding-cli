@@ -19,5 +19,7 @@ export {
   renderChannelList,
   renderTabBar,
   getToolIcon,
+  getToolKeyArg,
   type TabInfo,
 } from './layout.js';
+export { playToolComplete, playTurnComplete, setSoundsEnabled } from './sounds.js';

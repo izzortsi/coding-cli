@@ -190,6 +190,14 @@ export class SubagentManager {
     return handle;
   }
 
+  runningCount(): number {
+    let count = 0;
+    for (const handle of this.agents.values()) {
+      if (handle.status === 'running') count++;
+    }
+    return count;
+  }
+
   list(): SubagentHandle[] {
     return Array.from(this.agents.values());
   }

@@ -79,6 +79,34 @@ export function getToolIcon(name: string): string {
   return TOOL_ICONS[name] ?? `${FG.gray}◆${RESET}`;
 }
 
+/**
+ * Returns the most informative single argument for a tool invocation.
+ * Returns a short string like "src/repl.ts" or `"pattern" in src/`.
+ */
+export function getToolKeyArg(toolName: string, input?: Record<string, unknown>): string {
+  if (!input) return '';
+  switch (toolName) {
+    case 'read_file': return (input.file_path as string) || '';
+    case 'propose_write': return (input.file_path as string) || '';
+    case 'propose_edit': return (input.file_path as string) || '';
+    case 'propose_exec': {
+      const cmd = (input.command as string) || '';
+      return cmd.length > 50 ? cmd.substring(0, 47) + '...' : cmd;
+    }
+    case 'code_search': return `"${input.patterns}" in ${input.paths || '.'}`;
+    case 'list_directory': return (input.path as string) || '.';
+    case 'directory_tree': return (input.path as string) || '.';
+    case 'find_files': return (input.path as string) || '.';
+    case 'lisp_eval': {
+      const expr = (input.expression as string) || '';
+      return expr.length > 40 ? expr.substring(0, 37) + '...' : expr;
+    }
+    case 'run_subagent': return `${input.agent_type || 'explore'}`;
+    case 'dismiss_result': return (input.tool_use_id as string) || '';
+    default: return '';
+  }
+}
+
 // --- Tool Call Display ---
 
 export function renderToolCalls(toolCalls: ToolCallInfo[]): string {
