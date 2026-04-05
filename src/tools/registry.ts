@@ -39,7 +39,7 @@ export class ToolRegistry {
       .filter(t => !this.toolFilter || !this.toolFilter.has(t.name))
       .map(({ name, description, input_schema }) => ({
         name,
-        description,
+        description: typeof description === 'function' ? description() : description,
         input_schema,
       }));
   }
@@ -60,12 +60,17 @@ export class ToolRegistry {
       };
     }
 
+    return this.executeDirect(toolCall);
+  }
+
+  /** Execute a tool bypassing mode filters. For internal bridges (Lisp runtime, subagents). */
+  async executeDirect(toolCall: ToolUseContent): Promise<ToolResultContent> {
     const tool = this.tools.get(toolCall.name);
     if (!tool) {
       return {
         type: 'tool_result',
         tool_use_id: toolCall.id,
-        content: `Error: Unknown tool "${toolCall.name}". Available: ${Array.from(this.tools.keys()).join(', ')}`,
+        content: `Error: Unknown tool "${toolCall.name}". Available: ${this.getDefinitions().map(t => t.name).join(', ')}`,
         is_error: true,
       };
     }
@@ -86,5 +91,10 @@ export class ToolRegistry {
         is_error: true,
       };
     }
+  }
+
+  /** Get all tool names (unfiltered). */
+  allToolNames(): string[] {
+    return Array.from(this.tools.keys());
   }
 }
